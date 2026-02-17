@@ -1,0 +1,6 @@
+playlist-streamer
+config.local.yaml
+*.local.yaml
+cookies.txt
+data/
+yt-dlp

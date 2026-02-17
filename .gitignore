@@ -1,0 +1,17 @@
+# Local config & secrets
+config.local.yaml
+*.local.yaml
+cookies.txt
+
+# Downloaded binaries
+yt-dlp
+playlist-streamer/playlist-streamer
+owncast/owncast
+
+# Runtime data
+data/
+owncast/data/
+playlist-streamer/data/
+
+# Build artifacts
+app/

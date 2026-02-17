@@ -1,0 +1,12 @@
+# Example playlist - replace URLs with your own videos
+
+playlists:
+  - name: "Daily Mix"
+    videos:
+      - url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+        provider: youtube
+      # - url: "https://kick.com/video/..."
+      #   provider: kick
+      # - url: "https://twitch.tv/videos/..."
+      #   provider: twitch
+    schedule: "0 9 * * *"  # Optional: cron expression (e.g. 9:00 daily)
