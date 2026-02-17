@@ -1,7 +1,10 @@
-# Local config & secrets
+# Local config & secrets (never commit these)
 config.local.yaml
 *.local.yaml
 cookies.txt
+.env
+.env.*
+*.pem
 
 # Downloaded binaries
 yt-dlp
