@@ -32,6 +32,7 @@ type Registry struct {
 func NewRegistry() *Registry {
 	r := &Registry{providers: make(map[string]VideoProvider)}
 	r.Register(NewYouTube())
+	r.Register(NewRealDebrid())
 	r.Register(NewKickStub())
 	r.Register(NewTwitchStub())
 	return r

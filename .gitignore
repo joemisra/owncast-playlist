@@ -1,6 +1,8 @@
 # Local config & secrets (never commit these)
+config.yaml
 config.local.yaml
 *.local.yaml
+watch-later.yaml
 cookies.txt
 .env
 .env.*
@@ -18,3 +20,12 @@ playlist-streamer/data/
 
 # Build artifacts
 app/
+
+# IDE / editor
+.cursor/
+
+# Local config (may contain stream key, API tokens)
+playlist-streamer/config.yaml
+
+# User-specific playlists (generated from YouTube watch later, etc.)
+playlist-streamer/watch-later.yaml
