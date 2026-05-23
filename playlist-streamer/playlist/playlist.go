@@ -15,15 +15,15 @@ type PlaylistFile struct {
 
 // Playlist is a named list of videos with optional schedule.
 type Playlist struct {
-	Name     string        `yaml:"name"`
-	Videos   []VideoEntry  `yaml:"videos"`
-	Schedule string        `yaml:"schedule"` // cron expression, optional
+	Name     string       `yaml:"name"`
+	Videos   []VideoEntry `yaml:"videos"`
+	Schedule string       `yaml:"schedule"` // cron expression, optional
 }
 
 // VideoEntry is a single video in a playlist.
 type VideoEntry struct {
-	URL      string `yaml:"url"`
-	Provider string `yaml:"provider"` // youtube, kick, twitch
+	URL      string `yaml:"url" json:"url"`
+	Provider string `yaml:"provider" json:"provider"` // youtube, kick, twitch
 }
 
 // LoadPlaylist loads a playlist from a YAML file.
@@ -41,15 +41,25 @@ func LoadPlaylist(path string) (*PlaylistFile, error) {
 
 // LoadPlaylistFromDir loads the first playlist found in dir, or the named file.
 func LoadPlaylistFromDir(dir string, name string) (*PlaylistFile, error) {
+	pf, _, err := LoadPlaylistFromDirWithPath(dir, name)
+	return pf, err
+}
+
+// LoadPlaylistFromDirWithPath loads the first playlist in dir (or the named file) and returns its filesystem path.
+func LoadPlaylistFromDirWithPath(dir string, name string) (*PlaylistFile, string, error) {
 	if name != "" {
 		p := filepath.Join(dir, name)
 		if _, err := os.Stat(p); err == nil {
-			return LoadPlaylist(p)
+			pf, err := LoadPlaylist(p)
+			if err != nil {
+				return nil, "", err
+			}
+			return pf, p, nil
 		}
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	for _, e := range entries {
 		if e.IsDir() {
@@ -65,10 +75,10 @@ func LoadPlaylistFromDir(dir string, name string) (*PlaylistFile, error) {
 			continue
 		}
 		if len(pf.Playlists) > 0 {
-			return pf, nil
+			return pf, p, nil
 		}
 	}
-	return nil, fmt.Errorf("no playlist found in %s", dir)
+	return nil, "", fmt.Errorf("no playlist found in %s", dir)
 }
 
 // First returns the first playlist, or nil if none.

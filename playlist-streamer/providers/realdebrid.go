@@ -18,8 +18,8 @@ const rdBaseURL = "https://api.real-debrid.com/rest/1.0"
 // via the Real-Debrid API. ffmpeg can read the resulting URLs directly,
 // so no download-then-stream is needed.
 type RealDebrid struct {
-	apiToken   string
-	httpClient *http.Client
+	apiToken     string
+	httpClient   *http.Client
 	pollInterval time.Duration
 	maxWait      time.Duration
 }
@@ -35,7 +35,7 @@ func NewRealDebrid() *RealDebrid {
 func (rd *RealDebrid) SetAPIToken(token string) { rd.apiToken = token }
 
 func (rd *RealDebrid) Name() string        { return "realdebrid" }
-func (rd *RealDebrid) StreamViaPipe() bool  { return false }
+func (rd *RealDebrid) StreamViaPipe() bool { return false }
 
 func (rd *RealDebrid) ValidateURL(rawURL string) (string, error) {
 	rawURL = strings.TrimSpace(rawURL)
@@ -49,6 +49,14 @@ func (rd *RealDebrid) ValidateURL(rawURL string) (string, error) {
 		return rawURL, nil
 	}
 	return "", fmt.Errorf("realdebrid: unsupported URL scheme: %s", rawURL)
+}
+
+// IsRealDebridURL returns true if the URL looks like a Real-Debrid link (for provider inference).
+func IsRealDebridURL(u string) bool {
+	lower := strings.ToLower(strings.TrimSpace(u))
+	return strings.HasPrefix(lower, "magnet:") ||
+		strings.Contains(lower, "real-debrid.com") ||
+		strings.Contains(lower, "rdeb.io")
 }
 
 // GetStreamURL takes a magnet link (or hoster link) and returns a direct
@@ -71,6 +79,47 @@ func (rd *RealDebrid) GetStreamURL(rawURL string) (string, error) {
 	return rd.unrestrictLink(rawURL)
 }
 
+// ── torrents list (for TUI import) ───────────────────────────────────
+
+// CachedTorrent is a torrent from the Real-Debrid torrents list (GET /torrents).
+type CachedTorrent struct {
+	ID       string   `json:"id"`
+	Filename string   `json:"filename"`
+	Status   string   `json:"status"`
+	Links    []string `json:"links"`
+}
+
+// ListCachedTorrents returns all downloaded (cached) torrents from Real-Debrid.
+// Uses pagination to fetch all. Only torrents with status "downloaded" and at least one link.
+func (rd *RealDebrid) ListCachedTorrents() ([]CachedTorrent, error) {
+	if rd.apiToken == "" {
+		return nil, fmt.Errorf("realdebrid: api_token not configured")
+	}
+	var out []CachedTorrent
+	page := 1
+	for {
+		path := fmt.Sprintf("/torrents?filter=0&page=%d&limit=100", page)
+		body, err := rd.get(path)
+		if err != nil {
+			return nil, fmt.Errorf("list torrents: %w", err)
+		}
+		var list []CachedTorrent
+		if err := json.Unmarshal(body, &list); err != nil {
+			return nil, fmt.Errorf("parse torrents: %w (body: %s)", err, string(body))
+		}
+		for _, t := range list {
+			if t.Status == "downloaded" && len(t.Links) > 0 {
+				out = append(out, t)
+			}
+		}
+		if len(list) < 100 {
+			break
+		}
+		page++
+	}
+	return out, nil
+}
+
 // ── magnet resolution ───────────────────────────────────────────────
 
 type addMagnetResp struct {
@@ -79,11 +128,11 @@ type addMagnetResp struct {
 }
 
 type torrentInfo struct {
-	ID       string       `json:"id"`
-	Filename string       `json:"filename"`
-	Status   string       `json:"status"`
-	Progress float64      `json:"progress"`
-	Links    []string     `json:"links"`
+	ID       string        `json:"id"`
+	Filename string        `json:"filename"`
+	Status   string        `json:"status"`
+	Progress float64       `json:"progress"`
+	Links    []string      `json:"links"`
 	Files    []torrentFile `json:"files"`
 }
 
@@ -201,13 +250,13 @@ func (rd *RealDebrid) pickBestLink(info *torrentInfo) string {
 // ── unrestrict ──────────────────────────────────────────────────────
 
 type unrestrictResp struct {
-	ID       string `json:"id"`
-	Filename string `json:"filename"`
-	MimeType string `json:"mimeType"`
-	Filesize int64  `json:"filesize"`
-	Link     string `json:"link"`
-	Download string `json:"download"`
-	Streamable int  `json:"streamable"`
+	ID         string `json:"id"`
+	Filename   string `json:"filename"`
+	MimeType   string `json:"mimeType"`
+	Filesize   int64  `json:"filesize"`
+	Link       string `json:"link"`
+	Download   string `json:"download"`
+	Streamable int    `json:"streamable"`
 }
 
 func (rd *RealDebrid) unrestrictLink(link string) (string, error) {

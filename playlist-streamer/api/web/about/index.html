@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>About couch</title>
+<link rel="stylesheet" href="../style.css">
+<style>
+  .docs-page { max-width: 820px; margin: 0 auto; padding: 2rem 1rem; }
+  .docs-page h1 { font-size: 1.6rem; margin-bottom: 0.25rem; }
+  .docs-page .tagline { color: var(--muted); font-size: 1rem; margin-bottom: 1.5rem; }
+  .view-toggle { display: flex; gap: 0; margin-bottom: 1.5rem; }
+  .view-toggle button {
+    flex: 1; background: var(--bg); border: 1px solid var(--border);
+    color: var(--muted); padding: 0.6rem; font-size: 0.9rem; cursor: pointer;
+    transition: background 0.12s;
+  }
+  .view-toggle button:first-child { border-radius: var(--rad) 0 0 var(--rad); }
+  .view-toggle button:last-child { border-radius: 0 var(--rad) var(--rad) 0; border-left: none; }
+  .view-toggle button.active { background: var(--accent-dim); color: #fff; font-weight: 600; border-color: var(--accent-dim); }
+  .docs-view { display: none; line-height: 1.7; }
+  .docs-view.active { display: block; }
+  .docs-view h2 { font-size: 1.2rem; margin: 1.5rem 0 0.5rem; color: var(--accent); }
+  .docs-view h3 { font-size: 1rem; margin: 1rem 0 0.4rem; }
+  .docs-view p { margin-bottom: 0.8rem; color: var(--text); }
+  .docs-view code {
+    background: var(--bg); border: 1px solid var(--border);
+    padding: 1px 6px; border-radius: 4px; font-size: 0.85rem;
+  }
+  .docs-view pre {
+    background: var(--bg); border: 1px solid var(--border);
+    padding: 1rem; border-radius: var(--rad); overflow-x: auto;
+    font-size: 0.82rem; margin-bottom: 1rem; line-height: 1.5;
+  }
+  .docs-view ul, .docs-view ol { margin-bottom: 0.8rem; padding-left: 1.5rem; }
+  .docs-view li { margin-bottom: 0.3rem; }
+  .docs-view a { color: var(--accent); }
+  .docs-view .muted-note { color: var(--muted); font-style: italic; font-size: 0.9rem; margin-top: 1.5rem; }
+  .docs-view .callout {
+    border-left: 3px solid var(--accent); padding: 0.6rem 1rem;
+    background: rgba(160,132,220,0.08); border-radius: 0 var(--rad) var(--rad) 0;
+    margin-bottom: 1rem;
+  }
+  .docs-view table { width: 100%; border-collapse: collapse; margin-bottom: 1rem; }
+  .docs-view th, .docs-view td {
+    border: 1px solid var(--border); padding: 0.5rem 0.7rem;
+    text-align: left; font-size: 0.85rem;
+  }
+  .docs-view th { background: var(--bg); }
+  .docs-back { margin-bottom: 1rem; }
+  .docs-back a { color: var(--muted); text-decoration: none; font-size: 0.85rem; }
+  .docs-back a:hover { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="docs-page">
+  <div class="docs-back"><a href="../">← Back to dashboard</a></div>
+  <h1>🛋️ couch.dsp.coffee</h1>
+  <p class="tagline">A community streaming platform for creative friends — built on a shoestring budget with open source and AI. <strong>If one person with very limited means can build this, so can you.</strong></p>
+
+  <div class="view-toggle">
+    <button class="active" data-view="creative">🎨 For Everyone</button>
+    <button data-view="technical">👩‍💻 Technical</button>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════ -->
+  <div id="view-creative" class="docs-view active">
+
+<h2>You have the same power they do</h2>
+<p>Big companies spend millions on streaming platforms. They collect your data, show you ads, tell you what you can and can't watch, and charge you monthly for the privilege. <strong>They want you to believe this is complicated.</strong> It's not.</p>
+
+<p>The same tools that corporations use — servers, open-source software, basic programming — are available to <strong>anyone</strong>. You don't need a budget. You don't need a degree. You don't need permission.</p>
+
+<div class="callout"><strong>couch was built by one person with very limited means.</strong> The monthly cost is less than a single streaming subscription. The software is free. AI helped write the code — but you could learn to do the same thing with patience and freely available tutorials.</div>
+
+<h2>What is couch?</h2>
+<p>couch is a <strong>shared watching space</strong> for a small group of creative friends — artists, musicians, filmmakers, people who love weird movies and good conversation. Think of it like a private theater on the internet: one person curates what's playing, everyone watches together, and there's a chat room to talk during the show.</p>
+
+<h2>Who is this for?</h2>
+<p>Small communities. Friend groups who want to watch things together without a corporation in the middle. People who make art and want to share it in a space that feels like theirs. Anyone who's ever thought "I wish there was a place online that felt like someone's living room."</p>
+
+<p>It's <em>not</em> for big audiences, monetization, or growth hacking. It's for the opposite of that.</p>
+
+<h2>What can you do here?</h2>
+<ul>
+  <li><strong>Watch together</strong> — Films, shows, music videos, live streams. Whatever the curator puts on.</li>
+  <li><strong>Chat while you watch</strong> — Built-in chat right next to the video. No separate app needed.</li>
+  <li><strong>Visual effects</strong> — Anyone can add CRT scanlines, VHS distortion, glitch effects, color grading — overlaid on the video in real time, just by typing in chat.</li>
+  <li><strong>No ads, no tracking, no algorithm</strong> — It's a room. You're in it together. That's the whole idea.</li>
+</ul>
+
+<h2>Why this matters</h2>
+<p>The internet used to be made of places like this — small, personal, hand-built. Somewhere along the way, we got convinced that only companies could run things. That you needed venture capital and a team of engineers. That's a lie they sold us.</p>
+
+<p><strong>Harmful people and greedy corporations already know how to use these tools.</strong> They use them to extract, to manipulate, to consolidate power. If the people who care about art and community and each other don't learn to use them too, we cede the whole thing. Every person who builds their own space instead of renting one from a corporation makes the internet a little more ours again.</p>
+
+<h2>The story</h2>
+<p>couch was built by someone with very limited means — not much money, but a lot of love for sharing media with friends. Instead of paying for expensive streaming services, they used <strong>open-source software</strong> and <strong>AI assistance</strong> to build their own platform. The whole thing runs on a single rented server that costs less than a night out.</p>
+
+<p>This project has been a side effort over about a year and a half, tinkered on in spare moments. It started with handwritten code — just figuring things out the old-fashioned way. Then Claude came along and helped accelerate the work. Later, as Cursor and Codex released newer versions, they joined the toolkit. Eventually, <a href="https://openclaw.ai" target="_blank">OpenClaw</a> with DeepSeek took over the heavy lifting. Each tool arrived at a different stage and brought something new.</p>
+
+<p><strong>It wouldn't normally take a year and a half.</strong> That's just what a side project looks like — a few hours here, a weekend there, sometimes weeks of not touching it at all. But there's another reason: the tools kept getting dramatically better while this was being built. A year and a half ago, LLMs were impressive but limited. Today they're <em>startlingly</em> capable — and affordable enough that a single person with very little money can use them to build real infrastructure. If you started this project tomorrow, with today's tools, you could finish it in a fraction of the time. The speed at which this technology is improving is genuinely hard to keep up with.</p>
+
+<p>Everything here — the streaming server, the playlist system, the visual effects engine, this website — is free and open-source. AI (specifically <a href="https://openclaw.ai" target="_blank">OpenClaw</a> + DeepSeek) helped write the code, design the systems, and keep everything running. But <strong>you don't need AI to do this.</strong> Everything here can be built with freely available documentation, some patience, and a willingness to learn.</p>
+
+<p><strong>LLMs also make excellent tutors.</strong> If you'd rather build everything yourself and understand it deeply, an AI can walk you through concepts, explain code line by line, suggest approaches, and debug with you — like having a patient teacher who never gets tired of your questions. The choice is yours: use AI as a builder, use it as a teacher, or skip it entirely.</p>
+
+<div class="callout"><strong>The point isn't the technology.</strong> The point is showing people — especially people who've been told they can't — that they can. If one person with almost no resources can build a streaming platform for their friends, what could you build for yours?</div>
+
+<h2>How it works (simple version)</h2>
+<ol>
+  <li><strong>A server</strong> (a computer in a data center, ~$10/month) hosts everything.</li>
+  <li><strong>Owncast</strong> handles the video streaming — like a self-hosted Twitch.</li>
+  <li><strong>A playlist system</strong> queues up videos and plays them in order.</li>
+  <li><strong>An effects system</strong> overlays real-time visual effects on the video.</li>
+  <li><strong>A web dashboard</strong> lets you manage everything without touching a command line.</li>
+</ol>
+
+<h2>Want your own?</h2>
+<p>If you're technically inclined, click the <strong>Technical</strong> tab above for a full walkthrough. If you're not technical, that's okay — share this with a tech-savvy friend. The setup costs less than a streaming subscription. The knowledge is free.</p>
+
+<p><strong>The tools are yours.</strong> They always have been.</p>
+
+<h2>Questions people ask</h2>
+
+<p><strong>Is this legal?</strong><br>Yes — Owncast is open-source streaming software, same category as OBS or VLC. What you stream is your business, same as any other platform.</p>
+
+<p><strong>Do I need to know how to code?</strong><br>No. To <em>use</em> couch, you just need a browser. To <em>build</em> your own, some technical comfort helps — but today's AI tools can walk you through every step. See the Technical tab for the full walkthrough.</p>
+
+<p><strong>How much does it really cost?</strong><br>As little as $6/month if you go minimal, or around $25-35/month for something that can handle 50+ people watching at once. See the cost breakdown in the Technical tab.</p>
+
+<p><strong>Can I help?</strong><br>If you're a friend of the community, yes — ideas, feedback, testing, just showing up to watch things. The source code will be on GitHub when it's ready. Low pressure, always.</p>
+
+<p class="muted-note">🪷 This project is actively evolving — the person behind it is continually tinkering, adding features, and improving things. Nothing here is finished, and that's the point. It grows as the community grows.</p>
+
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════ -->
+  <div id="view-technical" class="docs-view">
+
+<div class="callout"><strong>Everything documented here was built by one person.</strong> No team, no budget, no computer science degree. Just curiosity, open-source software, and AI assistance. If you can read documentation and copy-paste commands, you can build this.</div>
+
+<h2>Architecture</h2>
+<p>couch is a stack of four main components running on a single Linux server, fronted by Caddy as a reverse proxy with automatic TLS.</p>
+
+<table>
+  <tr><th>Component</th><th>Role</th><th>Port</th><th>Language</th></tr>
+  <tr><td><strong>Owncast</strong></td><td>Live streaming server + chat</td><td>8080</td><td>Go (binary)</td></tr>
+  <tr><td><strong>playlist-streamer</strong></td><td>Playlist management, video streaming to RTMP, web dashboard</td><td>9090</td><td>Go</td></tr>
+  <tr><td><strong>layer-server</strong></td><td>WebGL shader state sync via SSE</td><td>9100</td><td>Go</td></tr>
+  <tr><td><strong>Caddy</strong></td><td>Reverse proxy, TLS termination, static files</td><td>443</td><td>Go</td></tr>
+</table>
+
+<pre>
+Browser ──▶ couch.dsp.coffee ──▶ Caddy
+                                   ├── / → Owncast :8080
+                                   ├── /stream/* → playlist-streamer :9090
+                                   └── /layers-api/* → layer-server :9100
+</pre>
+
+<h2>Component Breakdown</h2>
+
+<h3>1. Owncast</h3>
+<p>The heart of the platform. Owncast is a self-hosted live streaming server with built-in chat, viewer count, and a clean web UI. It ingests video via RTMP and serves it to viewers via HLS.</p>
+<ul>
+  <li>Installed at <code>/opt/owncast/owncast/</code></li>
+  <li>Updated via <code>grab-latest.sh</code> which pulls the latest GitHub release</li>
+  <li>Chat is built-in — no external chat service needed</li>
+  <li>Custom client-side code lives in <code>data/public/couch-layers/</code></li>
+</ul>
+
+<h3>2. playlist-streamer</h3>
+<p>A Go application that manages playlists and streams video files (or YouTube URLs) to Owncast via RTMP. It supports multiple video providers, continuous looping, scheduled playback, and a web dashboard for management.</p>
+<ul>
+  <li><strong>Providers:</strong> Local files, YouTube (via yt-dlp), Real-Debrid, HTTP streams, Kick/Twitch (stubs)</li>
+  <li><strong>Modes:</strong> Continuous loop, scheduled (cron), interactive CLI, TUI studio, or HTTP API</li>
+  <li><strong>Dashboard:</strong> Embedded web UI served from the same binary — playlist management, video upload, schedule calendar</li>
+  <li><strong>File watcher:</strong> Auto-detects new files dropped in the videos directory (SFTP uploads)</li>
+</ul>
+<p>Source: <code>/opt/owncast/playlist-streamer/</code></p>
+
+<h3>3. layer-server</h3>
+<p>A lightweight Go server that manages real-time WebGL shader overlays on the Owncast video player. Viewers type commands in chat (like <code>!preset crt</code>), the server deduplicates and broadcasts the canonical state to all connected clients via SSE.</p>
+
+<p><strong>Available effects:</strong> CRT scanlines, chromatic aberration, color grading, digital glitch, VHS tracking/noise, pixelation, color inversion — with blend modes and per-layer opacity.</p>
+
+<p>Source: <code>/opt/owncast/layer-server/</code></p>
+<ul>
+  <li>Commands are text in chat (e.g. <code>!fx crt scanlineIntensity 0.8</code>)</li>
+  <li>State syncs instantly to all viewers via Server-Sent Events</li>
+  <li>Allowlist controls who can run commands</li>
+  <li>WebGL shader code runs client-side in the browser for zero server GPU cost</li>
+</ul>
+
+<h2>Layer System Architecture</h2>
+<pre>
+Chat (WebSocket)                  Allowed user types !preset crt
+    │
+    ▼
+couch-layers.js                   Detects command, POSTs to server
+    │
+    ▼
+layer-server (:9100)              Deduplicates, updates canonical state
+    │
+    ▼  SSE push
+All connected clients             Apply WebGL shader stack to &lt;video&gt;
+</pre>
+
+<h2>Setting Up Your Own</h2>
+
+<h3>Prerequisites</h3>
+<ul>
+  <li>A Linux server (any VPS works — $5-10/mo)</li>
+  <li>A domain name</li>
+  <li>Go 1.22+, ffmpeg, yt-dlp</li>
+</ul>
+
+<h3>Quick Start</h3>
+<ol>
+  <li><strong>Install Owncast</strong> — Download the binary from <a href="https://owncast.online">owncast.online</a>, run it, configure via <code>/admin</code></li>
+  <li><strong>Clone the repo</strong> — <code>git clone ... /opt/owncast</code></li>
+  <li><strong>Build playlist-streamer</strong> — <code>cd playlist-streamer && go build -o playlist-streamer .</code></li>
+  <li><strong>Build layer-server</strong> — <code>cd layer-server && go build -o layer-server .</code></li>
+  <li><strong>Set up Caddy</strong> — Point your domain at the server, configure reverse proxy for the components</li>
+  <li><strong>Install systemd units</strong> — So everything starts on boot and restarts on failure</li>
+  <li><strong>Drop videos in <code>/opt/owncast/playlist-streamer/videos/</code></strong> — They auto-appear in the playlist</li>
+</ol>
+
+<h3>Cost Breakdown</h3>
+<p>Costs vary widely depending on how many people you expect to watch and whether you already have hardware. Here's the honest range:</p>
+<table>
+  <tr><th>Item</th><th>Budget Option</th><th>Comfortable Option</th></tr>
+  <tr><td>VPS / server</td><td>~$5/mo (1-2 viewers, small VPS)</td><td>~$25-35/mo (50+ concurrent viewers)</td></tr>
+  <tr><td>Domain name</td><td colspan="2">~$12/year</td></tr>
+  <tr><td>Owncast</td><td colspan="2">Free (open source)</td></tr>
+  <tr><td>Caddy</td><td colspan="2">Free (open source)</td></tr>
+  <tr><td>playlist-streamer + layer-server</td><td colspan="2">Free (custom, open source)</td></tr>
+  <tr><td><strong>Total</strong></td><td><strong>~$6/mo</strong></td><td><strong>~$26-36/mo</strong></td></tr>
+</table>
+
+<p>couch itself runs on a Hetzner VPS — more power than needed for a small group, but room to grow. You can start on a $5/mo VPS from providers like Hetzner, DigitalOcean, Vultr, or Netcup, and scale up if your audience grows. If you have an old desktop and decent upload speed at home, you can even self-host for just the electricity cost.</p>
+
+<p><strong>The takeaway:</strong> there are options at every budget level. The cheapest tier costs less than a sandwich per month. The comfortable tier costs less than a streaming subscription and a coffee. The point isn't the exact number — it's that you have choices.</p>
+
+<div class="callout"><strong>AI costs:</strong> During development, AI assistance (like OpenClaw + DeepSeek) was used for coding, system design, and debugging. At current API pricing, the monthly cost is single-digit dollars — and it's optional. Everything here can be built without AI using the documentation.</div>
+
+<h2>Stream Key Security</h2>
+<p>Never commit <code>config.local.yaml</code> to version control. It contains the Owncast stream key and API tokens. Use restricted file permissions (<code>0600</code>) and <code>.gitignore</code>.</p>
+
+<h2>Useful Commands</h2>
+<pre>
+# Restart everything
+systemctl restart owncast playlist-streamer layer-server
+
+# View logs
+journalctl -u playlist-streamer -f
+
+# Check layer state
+curl -s https://couch.dsp.coffee/layers-api/state | python3 -m json.tool
+
+# Force a layer preset (bypasses allowlist)
+curl -s -X POST http://localhost:9100/layers-api/state \
+  -H 'Content-Type: application/json' \
+  -d '{"cmd":"preset","args":["crt"]}'
+
+# Update Owncast to latest release
+cd /opt/owncast && bash grab-latest.sh
+</pre>
+
+<h2>Repository</h2>
+<p>The full source code — playlist-streamer, layer-server, and all configuration — will be available on GitHub. For now it's quietly running here. If you're interested in the code or want help setting up your own, reach out through the chat or community channels. No pressure, no spotlight.</p>
+
+<p><em>Last updated: <span id="doc-updated"></span> · This project is under active development — things change, improve, and grow.</em></p>
+
+  </div>
+</div>
+
+<script>
+// View toggle
+document.querySelectorAll('.view-toggle button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.view-toggle button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    document.querySelectorAll('.docs-view').forEach(v => v.classList.remove('active'));
+    document.getElementById('view-' + btn.dataset.view).classList.add('active');
+  });
+});
+// Set last-updated timestamp
+document.getElementById('doc-updated').textContent = new Date().toISOString().slice(0, 10);
+</script>
+</body>
+</html>

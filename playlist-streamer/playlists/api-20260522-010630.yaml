@@ -1,0 +1,114 @@
+playlists:
+    - name: Toast of London
+      videos:
+        - url: /opt/owncast/playlist-streamer/videos/Exit 57 - Pilot.avi
+          provider: local
+        - url: /opt/owncast/playlist-streamer/videos/S01_S01.Extras.avi
+          provider: local
+        - url: /opt/owncast/playlist-streamer/videos/Exit 57 - 101.avi
+          provider: local
+        - url: /opt/owncast/playlist-streamer/videos/S01_S01E00.avi
+          provider: local
+        - url: /opt/owncast/playlist-streamer/videos/Exit 57 - 102.avi
+          provider: local
+        - url: /opt/owncast/playlist-streamer/videos/S01_S01E01.avi
+          provider: local
+        - url: /opt/owncast/playlist-streamer/videos/Exit 57 - 103.avi
+          provider: local
+        - url: /opt/owncast/playlist-streamer/videos/S01_S01E02.avi
+          provider: local
+        - url: /opt/owncast/playlist-streamer/videos/Exit 57 - 104.avi
+          provider: local
+        - url: /opt/owncast/playlist-streamer/videos/S01_S01E03.avi
+          provider: local
+        - url: /opt/owncast/playlist-streamer/videos/Exit 57 - 105.avi
+          provider: local
+        - url: /opt/owncast/playlist-streamer/videos/S01_S01E04.avi
+          provider: local
+        - url: /opt/owncast/playlist-streamer/videos/Exit 57 - 106.avi
+          provider: local
+        - url: /opt/owncast/playlist-streamer/videos/S01_S01E05.avi
+          provider: local
+        - url: /opt/owncast/playlist-streamer/videos/Exit 57 - 107.avi
+          provider: local
+        - url: /opt/owncast/playlist-streamer/videos/S01_S01E06.avi
+          provider: local
+        - url: /opt/owncast/playlist-streamer/videos/Exit 57 - 108.avi
+          provider: local
+        - url: /opt/owncast/playlist-streamer/videos/S01_S01E07.avi
+          provider: local
+        - url: /opt/owncast/playlist-streamer/videos/Exit 57 - 109.avi
+          provider: local
+        - url: /opt/owncast/playlist-streamer/videos/S01_S01E08.avi
+          provider: local
+        - url: /opt/owncast/playlist-streamer/videos/Exit 57 - 110.avi
+          provider: local
+        - url: /opt/owncast/playlist-streamer/videos/S01_S01E09.avi
+          provider: local
+        - url: /opt/owncast/playlist-streamer/videos/Exit 57 - 111.avi
+          provider: local
+        - url: /opt/owncast/playlist-streamer/videos/S01_S01E10.avi
+          provider: local
+        - url: /opt/owncast/playlist-streamer/videos/Exit 57 - 112.avi
+          provider: local
+        - url: /opt/owncast/playlist-streamer/videos/S02_S02.Extras.avi
+          provider: local
+        - url: /opt/owncast/playlist-streamer/videos/Exit 57 - Promos.avi
+          provider: local
+        - url: /opt/owncast/playlist-streamer/videos/S02_S02E01.avi
+          provider: local
+        - url: /opt/owncast/playlist-streamer/videos/Exit 57 - Bonus Sketches.avi
+          provider: local
+        - url: /opt/owncast/playlist-streamer/videos/S02_S02E02.avi
+          provider: local
+        - url: /opt/owncast/playlist-streamer/videos/EXIT_57_S02E01.mkv
+          provider: local
+        - url: /opt/owncast/playlist-streamer/videos/S02_S02E03.avi
+          provider: local
+        - url: /opt/owncast/playlist-streamer/videos/EXIT_57_S02E02.mkv
+          provider: local
+        - url: /opt/owncast/playlist-streamer/videos/S02_S02E04.avi
+          provider: local
+        - url: /opt/owncast/playlist-streamer/videos/EXIT_57_S02E03.mkv
+          provider: local
+        - url: /opt/owncast/playlist-streamer/videos/S02_S02E05.avi
+          provider: local
+        - url: /opt/owncast/playlist-streamer/videos/EXIT_57_S02E04.mkv
+          provider: local
+        - url: /opt/owncast/playlist-streamer/videos/S02_S02E06.avi
+          provider: local
+        - url: /opt/owncast/playlist-streamer/videos/EXIT_57_S02E05.mkv
+          provider: local
+        - url: /opt/owncast/playlist-streamer/videos/S02_S02E07.avi
+          provider: local
+        - url: /opt/owncast/playlist-streamer/videos/EXIT_57_S02E06.mkv
+          provider: local
+        - url: /opt/owncast/playlist-streamer/videos/S02_S02E08.avi
+          provider: local
+        - url: /opt/owncast/playlist-streamer/videos/S02_S02E09.avi
+          provider: local
+        - url: /opt/owncast/playlist-streamer/videos/S02_S02E10.avi
+          provider: local
+        - url: /opt/owncast/playlist-streamer/videos/S03_S03.Extras.avi
+          provider: local
+        - url: /opt/owncast/playlist-streamer/videos/S03_S03E01.avi
+          provider: local
+        - url: /opt/owncast/playlist-streamer/videos/S03_S03E02.avi
+          provider: local
+        - url: /opt/owncast/playlist-streamer/videos/S03_S03E03.avi
+          provider: local
+        - url: /opt/owncast/playlist-streamer/videos/S03_S03E04.avi
+          provider: local
+        - url: /opt/owncast/playlist-streamer/videos/S03_S03E05.avi
+          provider: local
+        - url: /opt/owncast/playlist-streamer/videos/S03_S03E06.avi
+          provider: local
+        - url: /opt/owncast/playlist-streamer/videos/S03_S03E07.avi
+          provider: local
+        - url: /opt/owncast/playlist-streamer/videos/S03_S03E08.avi
+          provider: local
+        - url: /opt/owncast/playlist-streamer/videos/S03_S03E09.avi
+          provider: local
+        - url: /opt/owncast/playlist-streamer/videos/S03_S03E10.avi
+          provider: local
+      schedule: ""

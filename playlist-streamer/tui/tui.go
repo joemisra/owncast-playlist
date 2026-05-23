@@ -14,7 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-var knownProviders = []string{"youtube", "realdebrid", "kick", "twitch"}
+var knownProviders = []string{"youtube", "realdebrid", "http", "kick", "twitch"}
 
 var (
 	titleStyle = lipgloss.NewStyle().
@@ -50,6 +50,7 @@ var (
 	providerColors = map[string]lipgloss.Color{
 		"youtube":    "196",
 		"realdebrid": "214",
+		"http":       "39",
 		"kick":       "82",
 		"twitch":     "135",
 	}
@@ -73,6 +74,7 @@ const (
 
 type model struct {
 	playlistDir string
+	configPath  string
 	files       []string
 	fileCursor  int
 
@@ -91,14 +93,15 @@ type model struct {
 	height      int
 }
 
-func newModel(dir string) model {
+func newModel(playlistDir, configPath string) model {
 	ti := textinput.New()
 	ti.Placeholder = "https://youtube.com/watch?v=... or magnet:?xt=..."
 	ti.CharLimit = 500
 	ti.Width = 60
 
 	m := model{
-		playlistDir: dir,
+		playlistDir: playlistDir,
+		configPath:  configPath,
 		urlInput:    ti,
 	}
 	m.loadFiles()
@@ -156,6 +159,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.String() == "ctrl+c" {
 			return m, tea.Quit
 		}
+	case importRDResultMsg:
+		m.loadFiles()
+		if msg.err != nil {
+			m.setError(fmt.Sprintf("Import failed: %v", msg.err))
+		} else if msg.n == 0 {
+			m.setStatus("No cached torrents found (or realdebrid_token not set)")
+		} else {
+			m.setStatus(fmt.Sprintf("Created %d playlist(s) from Real-Debrid cache", msg.n))
+		}
+		return m, nil
 	}
 
 	switch m.currentView {
@@ -202,6 +215,13 @@ func (m model) updateFiles(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case "r":
 		m.loadFiles()
 		m.setStatus("Refreshed")
+	case "i":
+		if m.configPath == "" {
+			m.setError("Config path not set — cannot import from Real-Debrid")
+			break
+		}
+		m.setStatus("Importing from Real-Debrid...")
+		return m, func() tea.Msg { return runImportRD(m.playlistDir, m.configPath) }
 	case "q":
 		return m, tea.Quit
 	}
@@ -369,7 +389,7 @@ func (m model) viewFiles(b *strings.Builder) {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(helpStyle.Render("  ↑↓/jk navigate • enter open • r refresh • q quit"))
+	b.WriteString(helpStyle.Render("  ↑↓/jk navigate • enter open • r refresh • i import from RD • q quit"))
 }
 
 func (m model) viewPlaylist(b *strings.Builder) {
@@ -455,9 +475,21 @@ func truncate(s string, max int) string {
 	return s[:max-3] + "..."
 }
 
-// Run launches the TUI playlist editor.
-func Run(playlistDir string) error {
-	p := tea.NewProgram(newModel(playlistDir), tea.WithAltScreen())
+// importRDResultMsg is sent when ImportFromRealDebrid completes.
+type importRDResultMsg struct {
+	n   int
+	err error
+}
+
+// runImportRD runs ImportFromRealDebrid and sends the result. Used as tea.Cmd.
+func runImportRD(playlistDir, configPath string) tea.Msg {
+	n, err := ImportFromRealDebrid(playlistDir, configPath)
+	return importRDResultMsg{n: n, err: err}
+}
+
+// RunEditor launches the playlist editor only (no streaming).
+func RunEditor(playlistDir, configPath string) error {
+	p := tea.NewProgram(newModel(playlistDir, configPath), tea.WithAltScreen())
 	_, err := p.Run()
 	return err
 }

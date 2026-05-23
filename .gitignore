@@ -4,6 +4,7 @@ config.local.yaml
 *.local.yaml
 watch-later.yaml
 cookies.txt
+cookies,txt
 .env
 .env.*
 *.pem
@@ -12,11 +13,15 @@ cookies.txt
 yt-dlp
 playlist-streamer/playlist-streamer
 owncast/owncast
+layer-server/layer-server
 
 # Runtime data
 data/
 owncast/data/
 playlist-streamer/data/
+playlist-streamer/videos/
+playlist-streamer/playlists/tmp/
+playlist-streamer/playlists/old/
 
 # Build artifacts
 app/

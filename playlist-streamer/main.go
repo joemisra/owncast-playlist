@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"playlist-streamer/api"
 	"playlist-streamer/config"
 	"playlist-streamer/playlist"
 	"playlist-streamer/tui"
@@ -26,7 +27,9 @@ func main() {
 	playlistName := flag.String("playlist", "", "Playlist name or file (default: first in playlists dir)")
 	runNow := flag.Bool("run", false, "Start streaming immediately (no schedule)")
 	daemon := flag.String("daemon", "", "Run with cron: 'schedule' uses playlist schedule, 'continuous' runs 24/7")
-	tuiMode := flag.Bool("tui", false, "Launch TUI playlist editor")
+	tuiMode := flag.Bool("tui", false, "Full studio: playlist editor + live RTMP stream (same screen)")
+	tuiEditOnly := flag.Bool("tui-edit", false, "Playlist editor only (no streaming)")
+	apiAddr := flag.String("api", "", "HTTP API listen address, e.g. :9090 (also starts streaming)")
 	flag.Parse()
 
 	if *configPath == "config.yaml" {
@@ -45,13 +48,28 @@ func main() {
 		plPath = filepath.Join(filepath.Dir(exe), "playlists")
 	}
 
-	if *tuiMode {
-		if err := tui.Run(plPath); err != nil {
+	if *tuiEditOnly {
+		if err := tui.RunEditor(plPath, *configPath); err != nil {
 			log.Fatalf("tui: %v", err)
 		}
 		return
 	}
+	if *tuiMode {
+		pf, playlistPath, err := playlist.LoadPlaylistFromDirWithPath(plPath, *playlistName)
+		if err != nil {
+			log.Fatalf("load playlist: %v", err)
+		}
+		if pf.First() == nil {
+			log.Fatal("no playlist in file")
+		}
+		w := worker.New(cfg)
+		if err := tui.RunStudio(cfg, *configPath, plPath, pf, playlistPath, w); err != nil {
+			log.Fatalf("studio: %v", err)
+		}
+		return
+	}
 
+	// Load the playlist file we'll use
 	pf, err := playlist.LoadPlaylistFromDir(plPath, *playlistName)
 	if err != nil {
 		log.Fatalf("load playlist: %v", err)
@@ -63,14 +81,103 @@ func main() {
 
 	w := worker.New(cfg)
 
+	// ── API mode: stream + HTTP API ─────────────────────────────
+	if *apiAddr != "" {
+		// Use the API address as a flag value (can also be set in config)
+		if *apiAddr == "" || *apiAddr == "true" {
+			*apiAddr = ":9090"
+		}
+		runAPIMode(w, pl, cfg, plPath, *apiAddr, *daemon == "continuous")
+		return
+	}
+
 	switch {
 	case *runNow, *daemon == "continuous":
 		runInteractive(w, pl, cfg)
 	case *daemon == "schedule":
 		runScheduled(w, pl)
 	default:
-		log.Print("Usage: playlist-streamer -run | -daemon=schedule | -daemon=continuous | -tui")
-		log.Fatal("  -run: stream now | -daemon=schedule: use playlist cron | -daemon=continuous: stream 24/7 | -tui: edit playlists")
+		log.Print("Usage: playlist-streamer -run | -daemon=schedule | -daemon=continuous | -tui | -tui-edit | -api=:9090")
+		log.Fatal("  -run: stream now | -daemon=schedule: cron | -daemon=continuous: 24/7 | -tui: studio (edit + stream) | -tui-edit: editor only | -api: stream + HTTP API")
+	}
+}
+
+// runAPIMode starts streaming and the HTTP API server, then waits for SIGINT/SIGTERM.
+func runAPIMode(w *worker.StreamWorker, pl *playlist.Playlist, cfg *config.Config, plPath, addr string, continuous bool) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Create API server first so the stream loop can check ShouldContinue()
+	apiSrv := api.New(cfg, w, plPath)
+
+	// Start streaming in background
+	streamDone := make(chan struct{})
+	go func() {
+		defer close(streamDone)
+		if continuous {
+			log.Printf("Starting continuous stream for playlist %q (%d videos)", pl.Name, len(pl.Videos))
+		} else {
+			log.Printf("Starting stream for playlist %q (%d videos)", pl.Name, len(pl.Videos))
+		}
+
+		for {
+			if ctx.Err() != nil {
+				return
+			}
+			if err := w.StreamPlaylist(ctx, pl); err != nil && err != context.Canceled {
+				log.Printf("stream error: %v", err)
+			}
+			if ctx.Err() != nil {
+				return
+			}
+			if !continuous || !apiSrv.ShouldContinue() {
+				log.Println("Stream stopped — not restarting")
+				return
+			}
+			log.Println("Playlist ended, starting over (continuous mode)...")
+		}
+	}()
+	apiErr := make(chan error, 1)
+	go func() {
+		apiErr <- apiSrv.Listen(addr)
+	}()
+
+	log.Printf("[api] Playlist streamer API running on %s", addr)
+	log.Println("Available endpoints:")
+	log.Println("  GET  /api/status")
+	log.Println("  POST /api/control/play  /api/control/pause  /api/control/skip")
+	log.Println("  POST /api/control/subs  { \"enabled\": true }")
+	log.Println("  GET  /api/playlist")
+	log.Println("  POST /api/playlist     (replace entire playlist)")
+	log.Println("  POST /api/playlist/add { \"url\": \"...youtube playlist...\" }")
+	log.Println("  POST /api/playlist/video { \"url\": \"...\", \"provider\": \"youtube\" }")
+	log.Println("  POST /api/playlist/remove { \"index\": 3 }")
+	log.Println("  POST /api/playlist/load { \"file\": \"default.yaml\" }")
+	log.Println("  POST /api/playlist/save")
+	log.Println("Ctrl+C to stop")
+
+	// Wait for signal
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+	select {
+	case <-sig:
+		fmt.Println("\nShutting down...")
+	case err := <-apiErr:
+		if err != nil {
+			log.Printf("API server error: %v", err)
+		}
+	}
+
+	// Graceful shutdown
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdownCancel()
+	apiSrv.Shutdown(shutdownCtx)
+	w.Send(worker.CmdStop)
+	cancel()
+	select {
+	case <-streamDone:
+	case <-time.After(5 * time.Second):
+		log.Println("Timed out waiting for stream to stop")
 	}
 }
 

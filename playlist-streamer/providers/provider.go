@@ -1,6 +1,9 @@
 package providers
 
-import "errors"
+import (
+	"errors"
+	"strings"
+)
 
 // ErrNotImplemented is returned when a provider is not yet implemented.
 var ErrNotImplemented = errors.New("provider support not yet implemented")
@@ -33,9 +36,40 @@ func NewRegistry() *Registry {
 	r := &Registry{providers: make(map[string]VideoProvider)}
 	r.Register(NewYouTube())
 	r.Register(NewRealDebrid())
+	r.Register(NewHTTP())
+	r.Register(NewLocal())
 	r.Register(NewKickStub())
 	r.Register(NewTwitchStub())
 	return r
+}
+
+// InferProviderFromURL returns a provider name if the URL can be inferred,
+// or empty string if unknown. Used when playlist entry has no provider set.
+func InferProviderFromURL(rawURL string) string {
+	u := strings.TrimSpace(strings.ToLower(rawURL))
+	if u == "" {
+		return ""
+	}
+	if strings.HasPrefix(u, "magnet:") || strings.Contains(u, "real-debrid.com") || strings.Contains(u, "rdeb.io") {
+		return "realdebrid"
+	}
+	if strings.Contains(u, "youtube.com") || strings.Contains(u, "youtu.be") {
+		return "youtube"
+	}
+	if strings.Contains(u, "kick.com") {
+		return "kick"
+	}
+	if strings.Contains(u, "twitch.tv") {
+		return "twitch"
+	}
+	// Local file paths: starts with / or ./
+	if strings.HasPrefix(u, "/") || strings.HasPrefix(u, "./") {
+		return "local"
+	}
+	if strings.HasPrefix(u, "http://") || strings.HasPrefix(u, "https://") {
+		return "http"
+	}
+	return ""
 }
 
 // Register adds a provider.

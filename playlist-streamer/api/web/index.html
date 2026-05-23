@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>couch Stream Manager</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header id="topbar">
+  <h1>🎬&nbsp;<span>couch.dsp.coffee</span></h1>
+  <div id="status-bar">
+    <span id="status-indicator" class="dot stopped"></span>
+    <span id="status-text">Not streaming</span>
+    <span id="status-detail"></span>
+  </div>
+  <nav>
+    <button id="btn-play" title="Resume">▶</button>
+    <button id="btn-pause" title="Pause">⏸</button>
+    <button id="btn-skip" title="Skip">⏭</button>
+    <button id="btn-stop" title="Stop stream">⏹</button>
+    <button id="btn-save" title="Save playlist">💾</button>
+    <a href="about/" class="nav-link" title="About couch">📖</a>
+  </nav>
+</header>
+
+<main>
+  <section id="playlist-section">
+    <h2>Playlist <span id="pl-count"></span></h2>
+    <ol id="playlist"></ol>
+    <div id="pl-actions">
+      <div class="add-row">
+        <input id="add-url" type="text" placeholder="Video URL or file path…" autocomplete="off">
+        <select id="add-provider">
+          <option value="">auto</option>
+          <option value="youtube">YouTube</option>
+          <option value="local">Local</option>
+          <option value="http">HTTP</option>
+          <option value="realdebrid">Real-Debrid</option>
+          <option value="kick">Kick</option>
+          <option value="twitch">Twitch</option>
+        </select>
+        <button id="btn-add">Add</button>
+      </div>
+      <div class="add-row ytrow">
+        <input id="yt-playlist-url" type="text" placeholder="Or paste a YouTube playlist URL…" autocomplete="off">
+        <button id="btn-ytplaylist">Import YT Playlist</button>
+      </div>
+    </div>
+  </section>
+
+  <aside>
+    <div class="tabs">
+      <button class="tab active" data-tab="files-panel">📁 Files</button>
+      <button class="tab" data-tab="schedule-panel">📅 Schedule</button>
+    </div>
+
+    <div id="files-panel" class="tab-panel active">
+      <section id="upload-section">
+        <h2>📤 Upload Video</h2>
+        <div id="drop-zone">
+          <p>Drop a video file here</p>
+          <p class="hint">MP4, MKV, MOV, WebM, AVI, FLV</p>
+          <input type="file" id="file-input" accept="video/*" hidden>
+          <button id="btn-pick-file">Choose File</button>
+        </div>
+        <div id="upload-progress" class="hidden">
+          <div class="progress-bar"><div id="progress-fill"></div></div>
+          <span id="progress-text"></span>
+        </div>
+      </section>
+
+      <section id="videos-section">
+        <h2>📂 Video Library</h2>
+        <ul id="video-list"></ul>
+      </section>
+    </div>
+
+    <div id="schedule-panel" class="tab-panel">
+      <section id="schedule-section">
+        <h2>📅 Day Schedule <button id="btn-sched-save" title="Save schedule">💾</button></h2>
+        <div id="schedule-controls">
+          <button id="btn-sched-run">▶ Run Schedule</button>
+          <button id="btn-sched-stop" class="hidden">⏹ Stop</button>
+          <span id="sched-status" class="hidden">● Running</span>
+        </div>
+        <div id="schedule-grid"></div>
+      </section>
+    </div>
+  </aside>
+</main>
+
+<footer>
+  <small>playlist-streamer API · <span id="clock"></span></small>
+</footer>
+<script src="app.js"></script>
+</body>
+</html>
