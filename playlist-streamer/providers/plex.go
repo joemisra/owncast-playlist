@@ -3,7 +3,6 @@ package providers
 import (
 	"encoding/xml"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"path"
@@ -199,7 +198,7 @@ func (p *Plex) getXML(s PlexServer, path string, params url.Values, dst any) err
 	if s.Token == "" {
 		return fmt.Errorf("token not configured")
 	}
-	u := p.authURL(s, path)
+	u := strings.TrimRight(s.BaseURL, "/") + "/" + strings.TrimLeft(path, "/")
 	if len(params) > 0 {
 		parsed, _ := url.Parse(u)
 		q := parsed.Query()
@@ -216,14 +215,18 @@ func (p *Plex) getXML(s PlexServer, path string, params url.Values, dst any) err
 		return err
 	}
 	req.Header.Set("Accept", "application/xml")
+	// Keep credentials out of the URL. Go includes request URLs in connection
+	// errors, and those errors are surfaced to the dashboard.
+	req.Header.Set("X-Plex-Token", s.Token)
 	resp, err := p.client.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("connection failed: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		// Do not reflect upstream bodies into the manager UI. A Plex proxy or
+		// error page could include credentials or other private data.
+		return fmt.Errorf("server returned HTTP %d", resp.StatusCode)
 	}
 	if err := xml.NewDecoder(resp.Body).Decode(dst); err != nil {
 		return fmt.Errorf("decode response: %w", err)

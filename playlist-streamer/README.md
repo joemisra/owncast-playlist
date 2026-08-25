@@ -81,6 +81,19 @@ Use the filter to search titles or filenames, then select `+` beside a file to
 add its stable `plex://server/rating-key` URL to the current playlist. Plex
 tokens and direct media URLs are never stored in playlist files.
 
+### Reverse proxy path
+
+When the dashboard is mounted beneath a reverse-proxy path, pass that mount in
+`X-Forwarded-Prefix` so unauthenticated redirects stay beneath the public path:
+
+```caddyfile
+handle_path /stream/* {
+    reverse_proxy localhost:9090 {
+        header_up X-Forwarded-Prefix /stream
+    }
+}
+```
+
 ## Usage
 
 ```bash

@@ -10,9 +10,12 @@ import (
 
 func TestPlexBrowseAndResolve(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("X-Plex-Token") != "secret" {
+		if r.Header.Get("X-Plex-Token") != "secret" {
 			http.Error(w, "missing token", 401)
 			return
+		}
+		if r.URL.Query().Get("X-Plex-Token") != "" {
+			t.Error("Plex token leaked into request URL")
 		}
 		switch r.URL.Path {
 		case "/library/sections":
@@ -81,5 +84,28 @@ func TestPlexURLValidation(t *testing.T) {
 	}
 	if _, err := p.ValidateURL("plex://other/123"); err == nil {
 		t.Fatal("expected unknown server error")
+	}
+}
+
+func TestPlexErrorDoesNotExposeTokenOrResponseBody(t *testing.T) {
+	const token = "private-plex-token"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("X-Plex-Token"); got != token {
+			t.Errorf("X-Plex-Token = %q, want configured token", got)
+		}
+		if got := r.URL.Query().Get("X-Plex-Token"); got != "" {
+			t.Error("Plex token leaked into request URL")
+		}
+		http.Error(w, "upstream accidentally echoed "+token, http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	p := NewPlex([]PlexServer{{Name: "home", BaseURL: server.URL, Token: token}})
+	_, err := p.ListLibraries()
+	if err == nil {
+		t.Fatal("ListLibraries returned no error")
+	}
+	if got := err.Error(); got != "plex home: server returned HTTP 500" {
+		t.Fatalf("error = %q", got)
 	}
 }

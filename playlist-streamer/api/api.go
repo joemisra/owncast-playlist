@@ -260,8 +260,22 @@ func (s *Server) requireSession(next http.Handler) http.Handler {
 			s.writeError(w, http.StatusUnauthorized, "login required")
 			return
 		}
-		http.Redirect(w, r, "login.html", http.StatusSeeOther)
+		http.Redirect(w, r, prefixedPath(r, "/login.html"), http.StatusSeeOther)
 	})
+}
+
+// prefixedPath keeps redirects inside a reverse proxy mount such as /stream.
+// Proxies should provide the public mount point in X-Forwarded-Prefix.
+func prefixedPath(r *http.Request, target string) string {
+	prefix := strings.TrimSpace(r.Header.Get("X-Forwarded-Prefix"))
+	if prefix == "" || !strings.HasPrefix(prefix, "/") || strings.ContainsAny(prefix, "?#\\") {
+		return target
+	}
+	prefix = "/" + strings.Trim(prefix, "/")
+	if prefix == "/" || strings.Contains(prefix, "//") || strings.Contains(prefix, "/../") || strings.HasSuffix(prefix, "/..") {
+		return target
+	}
+	return prefix + "/" + strings.TrimLeft(target, "/")
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
