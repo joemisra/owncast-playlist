@@ -5,6 +5,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"playlist-streamer/api"
+	"playlist-streamer/applog"
 	"playlist-streamer/config"
 	"playlist-streamer/playlist"
 	"playlist-streamer/tui"
@@ -23,6 +25,7 @@ import (
 )
 
 func main() {
+	log.SetOutput(io.MultiWriter(os.Stderr, applog.Default))
 	configPath := flag.String("config", "config.yaml", "Path to config file")
 	playlistName := flag.String("playlist", "", "Playlist name or file (default: first in playlists dir)")
 	runNow := flag.Bool("run", false, "Start streaming immediately (no schedule)")
@@ -70,7 +73,7 @@ func main() {
 	}
 
 	// Load the playlist file we'll use
-	pf, err := playlist.LoadPlaylistFromDir(plPath, *playlistName)
+	pf, playlistPath, err := playlist.LoadPlaylistFromDirWithPath(plPath, *playlistName)
 	if err != nil {
 		log.Fatalf("load playlist: %v", err)
 	}
@@ -87,7 +90,7 @@ func main() {
 		if *apiAddr == "" || *apiAddr == "true" {
 			*apiAddr = ":9090"
 		}
-		runAPIMode(w, pl, cfg, plPath, *apiAddr, *daemon == "continuous")
+		runAPIMode(w, pl, cfg, plPath, *configPath, filepath.Base(playlistPath), *apiAddr, *daemon == "continuous")
 		return
 	}
 
@@ -103,12 +106,12 @@ func main() {
 }
 
 // runAPIMode starts streaming and the HTTP API server, then waits for SIGINT/SIGTERM.
-func runAPIMode(w *worker.StreamWorker, pl *playlist.Playlist, cfg *config.Config, plPath, addr string, continuous bool) {
+func runAPIMode(w *worker.StreamWorker, pl *playlist.Playlist, cfg *config.Config, plPath, configPath, playlistFile, addr string, continuous bool) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	// Create API server first so the stream loop can check ShouldContinue()
-	apiSrv := api.New(cfg, w, plPath)
+	apiSrv := api.New(cfg, w, plPath, configPath, playlistFile, pl)
 
 	// Start streaming in background
 	streamDone := make(chan struct{})
@@ -120,19 +123,30 @@ func runAPIMode(w *worker.StreamWorker, pl *playlist.Playlist, cfg *config.Confi
 			log.Printf("Starting stream for playlist %q (%d videos)", pl.Name, len(pl.Videos))
 		}
 
+		startupPlaylist := pl
 		for {
 			if ctx.Err() != nil {
 				return
 			}
-			if err := w.StreamPlaylist(ctx, pl); err != nil && err != context.Canceled {
+			active := w.CurrentPlaylist()
+			if active == nil {
+				active = startupPlaylist
+			}
+			if err := w.StreamPlaylist(ctx, active); err != nil && err != context.Canceled {
 				log.Printf("stream error: %v", err)
 			}
 			if ctx.Err() != nil {
 				return
 			}
 			if !continuous || !apiSrv.ShouldContinue() {
-				log.Println("Stream stopped — not restarting")
-				return
+				log.Println("Stream stopped — waiting for Play")
+				select {
+				case <-apiSrv.RestartRequests():
+					log.Println("Restarting stream from dashboard")
+					continue
+				case <-ctx.Done():
+					return
+				}
 			}
 			log.Println("Playlist ended, starting over (continuous mode)...")
 		}

@@ -24,6 +24,7 @@ type Playlist struct {
 type VideoEntry struct {
 	URL      string `yaml:"url" json:"url"`
 	Provider string `yaml:"provider" json:"provider"` // youtube, kick, twitch
+	Title    string `yaml:"title,omitempty" json:"title,omitempty"`
 }
 
 // LoadPlaylist loads a playlist from a YAML file.

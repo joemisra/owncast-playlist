@@ -14,20 +14,37 @@
     <span id="status-text">Not streaming</span>
     <span id="status-detail"></span>
   </div>
-  <nav>
-    <button id="btn-play" title="Resume">▶</button>
-    <button id="btn-pause" title="Pause">⏸</button>
-    <button id="btn-skip" title="Skip">⏭</button>
-    <button id="btn-stop" title="Stop stream">⏹</button>
-    <button id="btn-save" title="Save playlist">💾</button>
+  <nav aria-label="Stream controls">
+    <button id="btn-play" class="icon-button" title="Resume" aria-label="Resume stream">▶</button>
+    <button id="btn-pause" class="icon-button" title="Pause" aria-label="Pause stream">⏸</button>
+    <button id="btn-skip" class="icon-button" title="Skip" aria-label="Skip current item">⏭</button>
+    <button id="btn-stop" class="icon-button danger-quiet" title="Stop stream" aria-label="Stop stream">⏹</button>
+    <button id="btn-save" class="save-button" title="Save playlist"><span aria-hidden="true">💾</span> Save</button>
     <a href="about/" class="nav-link" title="About couch">📖</a>
+    <button id="btn-logout" class="quiet-button" title="Sign out">Sign out</button>
   </nav>
 </header>
 
 <main>
   <section id="playlist-section">
-    <h2>Playlist <span id="pl-count"></span></h2>
-    <ol id="playlist"></ol>
+    <div class="playlist-heading">
+      <div>
+        <span class="eyebrow">Queue editor</span>
+        <div class="playlist-title-row">
+          <select id="playlist-select" aria-label="Playlist to edit"></select>
+          <span id="pl-count" aria-live="polite"></span>
+          <span id="dirty-indicator" class="dirty-indicator hidden">Unsaved</span>
+        </div>
+      </div>
+      <button id="btn-pl-activate" class="primary-action" title="Replace the playing queue with this playlist">Play this playlist</button>
+    </div>
+    <div class="playlist-toolbar" aria-label="Playlist actions">
+      <button id="btn-pl-new" title="New playlist"><span aria-hidden="true">＋</span> New</button>
+      <button id="btn-pl-rename" class="quiet-button" title="Rename playlist">Rename</button>
+      <button id="btn-pl-delete" class="danger-quiet" title="Delete playlist">Delete</button>
+    </div>
+    <p class="playlist-help"><span id="playlist-mode"></span><span class="desktop-help"> · Drag to reorder · Enter plays · Delete removes · Ctrl/⌘ + ↑/↓ moves</span></p>
+    <ol id="playlist" aria-label="Playlist queue"><li class="empty-state">Loading playlist…</li></ol>
     <div id="pl-actions">
       <div class="add-row">
         <input id="add-url" type="text" placeholder="Video URL or file path…" autocomplete="off">
@@ -37,6 +54,7 @@
           <option value="local">Local</option>
           <option value="http">HTTP</option>
           <option value="realdebrid">Real-Debrid</option>
+          <option value="plex">Plex</option>
           <option value="kick">Kick</option>
           <option value="twitch">Twitch</option>
         </select>
@@ -52,7 +70,22 @@
   <aside>
     <div class="tabs">
       <button class="tab active" data-tab="files-panel">📁 Files</button>
+      <button class="tab" data-tab="plex-panel">Plex</button>
       <button class="tab" data-tab="schedule-panel">📅 Schedule</button>
+      <button class="tab" data-tab="config-panel">⚙ Config</button>
+      <button class="tab" data-tab="logs-panel">Logs</button>
+    </div>
+
+    <div id="plex-panel" class="tab-panel">
+      <section id="plex-section">
+        <h2>Plex Libraries</h2>
+        <div class="plex-controls">
+          <select id="plex-library"><option value="">Choose a library…</option></select>
+          <button id="btn-plex-refresh">Refresh</button>
+        </div>
+        <input id="plex-filter" type="search" placeholder="Filter titles or files…" autocomplete="off">
+        <ul id="plex-list"><li class="empty">Configure a Plex server to browse libraries</li></ul>
+      </section>
     </div>
 
     <div id="files-panel" class="tab-panel active">
@@ -85,6 +118,44 @@
           <span id="sched-status" class="hidden">● Running</span>
         </div>
         <div id="schedule-grid"></div>
+      </section>
+    </div>
+
+    <div id="config-panel" class="tab-panel">
+      <section id="config-section">
+        <h2>Settings</h2>
+        <p id="config-loading" class="hint">Loading settings…</p>
+        <form id="config-form" class="hidden">
+          <h3>Owncast front page</h3>
+          <label>Stream title <input id="cfg-owncast-title" type="text" maxlength="200"></label>
+          <div class="config-actions"><button type="button" id="btn-owncast-title">Update front-page title</button></div>
+          <h3>Plex servers</h3>
+          <div id="config-plex-servers"></div>
+          <button type="button" id="btn-config-add-plex">+ Add Plex server</button>
+          <h3>Streamer</h3>
+          <label><input id="cfg-loop" type="checkbox"> Loop playlist</label>
+          <label><input id="cfg-realtime" type="checkbox"> Real-time input pacing</label>
+          <label><input id="cfg-subtitles" type="checkbox"> Burn subtitles by default</label>
+          <label>Subtitle language <input id="cfg-subtitle-lang" type="text" maxlength="16"></label>
+          <label>Maximum retries <input id="cfg-max-retries" type="number" min="1" max="20"></label>
+          <label>Delay between videos (seconds) <input id="cfg-delay" type="number" min="0" max="3600"></label>
+          <h3>YouTube authentication</h3>
+          <p id="youtube-cookie-status" class="hint"></p>
+          <div class="config-actions youtube-cookie-actions">
+            <input id="youtube-cookies-file" type="file" accept=".txt,text/plain">
+            <button type="button" id="btn-youtube-cookies">Upload cookies.txt</button>
+          </div>
+          <div class="config-actions">
+            <button type="submit">Save &amp; restart</button>
+          </div>
+        </form>
+      </section>
+    </div>
+
+    <div id="logs-panel" class="tab-panel">
+      <section id="logs-section">
+        <h2>Recent logs <button id="btn-logs-refresh">Refresh</button></h2>
+        <pre id="log-output">Press Refresh to view logs.</pre>
       </section>
     </div>
   </aside>

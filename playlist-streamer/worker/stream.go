@@ -38,6 +38,7 @@ type StreamWorker struct {
 	paused   atomic.Bool
 	playing  atomic.Bool
 	current  atomic.Value // stores string (current URL)
+	phase    atomic.Value // idle, resolving, downloading, streaming, holding, retrying
 	index    atomic.Int32
 
 	playlistMu sync.RWMutex
@@ -48,6 +49,7 @@ type StreamWorker struct {
 	skipped   atomic.Bool
 	restart   atomic.Bool
 	rewind    atomic.Bool
+	jumpIndex atomic.Int32
 
 	ffmpegMu     sync.Mutex
 	ffmpegCancel context.CancelFunc
@@ -57,6 +59,11 @@ type StreamWorker struct {
 // New creates a new stream worker.
 func New(cfg *config.Config) *StreamWorker {
 	reg := providers.NewRegistry()
+	plexServers := make([]providers.PlexServer, 0, len(cfg.Plex.Servers))
+	for _, s := range cfg.Plex.Servers {
+		plexServers = append(plexServers, providers.PlexServer{Name: s.Name, BaseURL: s.BaseURL, Token: s.Token})
+	}
+	reg.Register(providers.NewPlex(plexServers))
 	if yt, ok := reg.Get("youtube").(*providers.YouTube); ok && yt != nil {
 		yt.SetYtdlpPath(cfg.Streamer.YtdlpPath)
 		if cfg.Streamer.CookiesFile != "" {
@@ -77,6 +84,8 @@ func New(cfg *config.Config) *StreamWorker {
 		cmdCh:    make(chan Command, 8),
 	}
 	w.subtitles.Store(cfg.Streamer.Subtitles)
+	w.phase.Store("idle")
+	w.jumpIndex.Store(-1)
 	return w
 }
 
@@ -91,6 +100,18 @@ func (w *StreamWorker) CurrentURL() string {
 	return ""
 }
 func (w *StreamWorker) CurrentIndex() int { return int(w.index.Load()) }
+func (w *StreamWorker) Phase() string {
+	if value := w.phase.Load(); value != nil {
+		return value.(string)
+	}
+	return "idle"
+}
+
+func (w *StreamWorker) SetYouTubeCookiesFile(path string) {
+	if yt, ok := w.registry.Get("youtube").(*providers.YouTube); ok && yt != nil {
+		yt.SetCookiesFile(path)
+	}
+}
 
 // CurrentPlaylist returns a snapshot safe to read without holding the worker lock.
 func (w *StreamWorker) CurrentPlaylist() *playlist.Playlist {
@@ -109,6 +130,76 @@ func (w *StreamWorker) SetPlaylist(pl *playlist.Playlist) {
 	defer w.playlistMu.Unlock()
 	w.playlist = pl
 	w.Send(CmdRewind)
+}
+
+// JumpTo interrupts the current item and starts the requested playlist index.
+func (w *StreamWorker) JumpTo(index int) {
+	w.jumpIndex.Store(int32(index))
+	w.skipped.Store(true)
+	w.paused.Store(false)
+	w.cancelFFmpeg()
+}
+
+// MoveVideo reorders an item and returns whether playback had to restart.
+func (w *StreamWorker) MoveVideo(from, to int) (bool, error) {
+	w.playlistMu.Lock()
+	defer w.playlistMu.Unlock()
+	if w.playlist == nil || from < 0 || from >= len(w.playlist.Videos) || to < 0 || to >= len(w.playlist.Videos) {
+		return false, fmt.Errorf("invalid playlist index")
+	}
+	if from == to {
+		return false, nil
+	}
+	item := w.playlist.Videos[from]
+	copy(w.playlist.Videos[from:], w.playlist.Videos[from+1:])
+	w.playlist.Videos = w.playlist.Videos[:len(w.playlist.Videos)-1]
+	w.playlist.Videos = append(w.playlist.Videos, playlist.VideoEntry{})
+	copy(w.playlist.Videos[to+1:], w.playlist.Videos[to:])
+	w.playlist.Videos[to] = item
+	current := int(w.index.Load())
+	newCurrent := current
+	if current == from {
+		newCurrent = to
+	} else if from < current && to >= current {
+		newCurrent--
+	} else if from > current && to <= current {
+		newCurrent++
+	}
+	if newCurrent != current {
+		w.index.Store(int32(newCurrent))
+		go w.JumpTo(newCurrent)
+		return true, nil
+	}
+	return false, nil
+}
+
+// RemoveVideo removes an item while keeping the playback cursor coherent.
+func (w *StreamWorker) RemoveVideo(index int) error {
+	w.playlistMu.Lock()
+	if w.playlist == nil || index < 0 || index >= len(w.playlist.Videos) {
+		w.playlistMu.Unlock()
+		return fmt.Errorf("invalid playlist index")
+	}
+	current := int(w.index.Load())
+	w.playlist.Videos = append(w.playlist.Videos[:index], w.playlist.Videos[index+1:]...)
+	remaining := len(w.playlist.Videos)
+	w.playlistMu.Unlock()
+	if remaining == 0 {
+		w.cancelFFmpeg()
+		return nil
+	}
+	if index <= current {
+		newCurrent := current
+		if index < current {
+			newCurrent--
+		}
+		if newCurrent >= remaining {
+			newCurrent = remaining - 1
+		}
+		w.index.Store(int32(newCurrent))
+		w.JumpTo(newCurrent)
+	}
+	return nil
 }
 
 // WithPlaylist runs fn with the live playlist pointer while holding the lock (for TUI edits).
@@ -192,10 +283,11 @@ func (w *StreamWorker) StreamPlaylist(ctx context.Context, pl *playlist.Playlist
 	w.playlistMu.Unlock()
 
 	w.playing.Store(true)
+	w.phase.Store("starting")
 	w.stopped.Store(false)
 	w.skipped.Store(false)
 	w.restart.Store(false)
-	defer w.playing.Store(false)
+	defer func() { w.playing.Store(false); w.phase.Store("idle") }()
 
 	cmdCtx, cmdCancel := context.WithCancel(ctx)
 	defer cmdCancel()
@@ -210,6 +302,11 @@ func (w *StreamWorker) StreamPlaylist(ctx context.Context, pl *playlist.Playlist
 		}
 		if w.stopped.Load() {
 			return nil
+		}
+		if requested := int(w.jumpIndex.Swap(-1)); requested >= 0 {
+			idx = requested
+			w.skipped.Store(false)
+			w.index.Store(int32(idx))
 		}
 		if w.rewind.CompareAndSwap(true, false) {
 			idx = 0
@@ -251,26 +348,6 @@ func (w *StreamWorker) StreamPlaylist(ctx context.Context, pl *playlist.Playlist
 			if err := w.holdUntilPlaylist(ctx); err != nil {
 				return err
 			}
-			continue
-		}
-
-		// For multi-file local playlists, use concat to avoid RTMP drop between videos
-		if n > 1 && allLocal(pl.Videos) {
-			transcode := false
-			for _, v := range pl.Videos {
-				if w.needsTranscode(v.URL) {
-					transcode = true
-					break
-				}
-			}
-			w.playlistMu.RUnlock()
-			w.index.Store(0)
-			err := w.streamConcatPlaylist(ctx, pl, transcode)
-			if err != nil && ctx.Err() == nil {
-				log.Printf("Concat stream failed: %v", err)
-			}
-			// After concat ends (or fails), re-evaluate
-			w.rewind.Store(true)
 			continue
 		}
 
@@ -326,6 +403,7 @@ func (w *StreamWorker) StreamPlaylist(ctx context.Context, pl *playlist.Playlist
 			}
 
 			log.Printf("[%d/%d] (attempt %d/%d) Streaming %s...", idx+1, n, attempt, w.cfg.Streamer.MaxRetries, entry.URL)
+			w.phase.Store("resolving")
 
 			var err error
 			if provider.StreamViaPipe() {
@@ -334,6 +412,7 @@ func (w *StreamWorker) StreamPlaylist(ctx context.Context, pl *playlist.Playlist
 				var streamURL string
 				streamURL, err = provider.GetStreamURL(entry.URL)
 				if err == nil {
+					w.phase.Store("streaming")
 					isLocal := provider.Name() == "local"
 					err = w.streamWithRestart(ctx, streamURL, isLocal)
 				}
@@ -355,6 +434,7 @@ func (w *StreamWorker) StreamPlaylist(ctx context.Context, pl *playlist.Playlist
 			}
 
 			lastErr = err
+			w.phase.Store("retrying")
 			log.Printf("Attempt %d failed: %v", attempt, err)
 			if attempt < w.cfg.Streamer.MaxRetries {
 				log.Printf("Waiting %ds before retry (holding stream)...", w.cfg.Streamer.DelayBetween)
@@ -376,6 +456,7 @@ func (w *StreamWorker) StreamPlaylist(ctx context.Context, pl *playlist.Playlist
 		w.playlistMu.RUnlock()
 		if idx < nextN && nextN > 0 {
 			log.Printf("Gap before next video (%ds, holding stream)...", w.cfg.Streamer.DelayBetween)
+			w.phase.Store("holding")
 			w.streamGap(ctx, time.Duration(w.cfg.Streamer.DelayBetween)*time.Second)
 		}
 	}
@@ -413,6 +494,7 @@ func (w *StreamWorker) streamOneViaPipe(ctx context.Context, videoURL string, pr
 	}
 
 	holdCtx, cancelHold := context.WithCancel(ctx)
+	w.phase.Store("downloading")
 	defer cancelHold()
 	holdDone := make(chan struct{})
 	go func() {
@@ -429,7 +511,7 @@ func (w *StreamWorker) streamOneViaPipe(ctx context.Context, videoURL string, pr
 		return err
 	}
 	defer os.Remove(tmpPath)
-
+	w.phase.Store("streaming")
 	return w.streamWithRestart(ctx, tmpPath, true)
 }
 

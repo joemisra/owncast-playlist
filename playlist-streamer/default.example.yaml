@@ -1,5 +1,17 @@
 # Example playlist - replace URLs with your own videos
 
+# Plex tokens stay here; playlists only contain plex://server/rating-key.
+# plex:
+#   servers:
+#     - name: home
+#       base_url: "http://192.168.1.20:32400"
+#       token: "your-X-Plex-Token"
+
+# Required to unlock the public dashboard's Config tab. Generate with:
+# openssl rand -hex 24
+# dashboard:
+#   admin_token: "replace-with-a-random-token"
+
 playlists:
   - name: "Daily Mix"
     videos:

@@ -1,10 +1,10 @@
 # Playlist Streamer
 
-Streams YouTube videos (and future Kick/Twitch) to Owncast via RTMP. Supports playlists, optional cron scheduling, and looping.
+Streams YouTube, Plex, local, HTTP, and Real-Debrid media to Owncast via RTMP. Supports playlists, optional cron scheduling, looping, and a web dashboard for managing playback.
 
 ## Prerequisites
 
-- [Go](https://go.dev/dl/) 1.21+
+- [Go](https://go.dev/dl/) 1.24+
 - [yt-dlp](https://github.com/yt-dlp/yt-dlp) — **must be recent** (YouTube changes often break old versions)
 - [Node.js](https://nodejs.org/) v20+ — required for YouTube's n-challenge (`sudo apt install nodejs`)
 - [ffmpeg](https://ffmpeg.org/)
@@ -57,6 +57,29 @@ Or: `make build`
 1. Copy `config.yaml` to `config.local.yaml` (or use `-config`).
 2. Set `owncast.stream_key` from your Owncast admin (`/admin` → Server → Stream Key).
 3. Edit `playlists/default.yaml` with your YouTube video URLs.
+
+### Plex
+
+Add one or more Plex servers to `config.local.yaml`, or configure them from the
+dashboard's Config tab:
+
+```yaml
+plex:
+  servers:
+    - name: home
+      base_url: "http://plex.example:32400"
+      token: "your-X-Plex-Token"
+```
+
+Treat the Plex token like a password and keep it out of Git. The dashboard's
+Plex tab organizes media as:
+
+- Movies → movie title → media file
+- TV Shows → show → season → episode and media file
+
+Use the filter to search titles or filenames, then select `+` beside a file to
+add its stable `plex://server/rating-key` URL to the current playlist. Plex
+tokens and direct media URLs are never stored in playlist files.
 
 ## Usage
 

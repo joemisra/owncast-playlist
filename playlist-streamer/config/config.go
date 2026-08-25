@@ -9,9 +9,25 @@ import (
 
 // Config holds the main service configuration.
 type Config struct {
-	Owncast   OwncastConfig  `yaml:"owncast"`
-	Streamer  StreamerConfig `yaml:"streamer"`
-	Playlists string         `yaml:"playlists"` // path to playlists directory or file
+	Owncast   OwncastConfig   `yaml:"owncast"`
+	Streamer  StreamerConfig  `yaml:"streamer"`
+	Plex      PlexConfig      `yaml:"plex"`
+	Dashboard DashboardConfig `yaml:"dashboard"`
+	Playlists string          `yaml:"playlists"` // path to playlists directory or file
+}
+
+type DashboardConfig struct {
+	AdminToken string `yaml:"admin_token"`
+}
+
+type PlexConfig struct {
+	Servers []PlexServerConfig `yaml:"servers"`
+}
+
+type PlexServerConfig struct {
+	Name    string `yaml:"name"`
+	BaseURL string `yaml:"base_url"`
+	Token   string `yaml:"token"`
 }
 
 // OwncastConfig holds Owncast RTMP connection details.
