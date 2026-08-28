@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -292,6 +293,13 @@ func (w *StreamWorker) StreamPlaylist(ctx context.Context, pl *playlist.Playlist
 	cmdCtx, cmdCancel := context.WithCancel(ctx)
 	defer cmdCancel()
 	go w.processCommands(cmdCtx)
+
+	// Local and Plex playlists can be normalized and published by one ffmpeg
+	// process. Keeping that process alive prevents Owncast from seeing every
+	// item boundary (and the holding screen) as a brand-new RTMP stream.
+	if handled, err := w.streamContinuousPlaylist(ctx, pl); handled {
+		return err
+	}
 
 	idx := 0
 	w.index.Store(int32(idx))
@@ -637,31 +645,130 @@ func (w *StreamWorker) buildFFmpegArgs(input string, burnSubs bool, loop bool, t
 	return args
 }
 
-// allLocal returns true if all video entries use the local provider.
-func allLocal(videos []playlist.VideoEntry) bool {
-	for _, v := range videos {
-		if v.Provider != "local" && (v.Provider != "" || strings.HasPrefix(v.URL, "http")) {
-			return false
-		}
-	}
-	return len(videos) > 0
+type concatInput struct {
+	resolved string
+	original string
+	duration float64
+	index    int
 }
 
-// streamConcatPlaylist streams all local videos in the current playlist as a single ffmpeg instance
-// using the concat demuxer. This avoids RTMP reconnection between videos.
-func (w *StreamWorker) streamConcatPlaylist(ctx context.Context, pl *playlist.Playlist, transcodeNeed bool) error {
-	// Build concat file
-	w.playlistMu.RLock()
-	videos := make([]string, len(pl.Videos))
-	for i, v := range pl.Videos {
-		videos[i] = v.URL
+// streamContinuousPlaylist handles multi-item local and Plex playlists with a
+// single normalized RTMP publisher. It returns handled=false for providers
+// that need their existing per-item path, such as YouTube.
+func (w *StreamWorker) streamContinuousPlaylist(ctx context.Context, pl *playlist.Playlist) (bool, error) {
+	if pl == nil || len(pl.Videos) < 2 {
+		return false, nil
 	}
-	w.playlistMu.RUnlock()
 
+	inputs := make([]concatInput, 0, len(pl.Videos))
+	for i, entry := range pl.Videos {
+		providerName := entry.Provider
+		if providerName == "" {
+			providerName = providers.InferProviderFromURL(entry.URL)
+		}
+		provider := w.registry.Get(providerName)
+		if provider == nil || provider.StreamViaPipe() || (provider.Name() != "local" && provider.Name() != "plex") {
+			return false, nil
+		}
+		resolved, err := provider.GetStreamURL(entry.URL)
+		if err != nil {
+			log.Printf("[continuous] Could not prepare item %d; using per-item streaming: %v", i+1, err)
+			return false, nil
+		}
+		duration := w.mediaDuration(ctx, resolved)
+		log.Printf("[continuous] Prepared item %d (%0.3fs)", i+1, duration)
+		if duration <= 0 {
+			log.Printf("[continuous] Item %d is not readable; using per-item retry handling", i+1)
+			return false, nil
+		}
+		inputs = append(inputs, concatInput{
+			resolved: resolved,
+			original: entry.URL,
+			duration: duration,
+			index:    i,
+		})
+	}
+
+	start := 0
+	for {
+		ordered := append([]concatInput(nil), inputs[start:]...)
+		ordered = append(ordered, inputs[:start]...)
+		w.index.Store(int32(ordered[0].index))
+		w.current.Store(ordered[0].original)
+		w.phase.Store("streaming")
+		log.Printf("[continuous] Publishing %d items over one RTMP connection", len(ordered))
+
+		err := w.streamConcatPlaylist(ctx, ordered, w.cfg.Streamer.LoopPlaylist)
+		if ctx.Err() != nil {
+			return true, ctx.Err()
+		}
+		if w.stopped.Load() {
+			return true, nil
+		}
+
+		if requested := int(w.jumpIndex.Swap(-1)); requested >= 0 && requested < len(inputs) {
+			start = requested
+			w.skipped.Store(false)
+			w.rewind.Store(false)
+			continue
+		}
+		if w.rewind.CompareAndSwap(true, false) {
+			start = 0
+			w.skipped.Store(false)
+			continue
+		}
+		if w.skipped.CompareAndSwap(true, false) {
+			start = (int(w.index.Load()) + 1) % len(inputs)
+			continue
+		}
+		return true, err
+	}
+}
+
+func (w *StreamWorker) mediaDuration(ctx context.Context, input string) float64 {
+	ffprobe := "ffprobe"
+	if w.cfg.Streamer.FFmpegPath != "" {
+		ffprobe = strings.TrimSuffix(w.cfg.Streamer.FFmpegPath, "ffmpeg") + "ffprobe"
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(probeCtx, ffprobe, "-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", input)
+	out, err := cmd.Output()
+	if err != nil {
+		return 0
+	}
+	duration, _ := strconv.ParseFloat(strings.TrimSpace(string(out)), 64)
+	return duration
+}
+
+func concatPosition(elapsed float64, inputs []concatInput) int {
+	total := 0.0
+	for _, input := range inputs {
+		if input.duration <= 0 {
+			return 0
+		}
+		total += input.duration
+	}
+	if total <= 0 {
+		return 0
+	}
+	elapsed = elapsed - float64(int64(elapsed/total))*total
+	for i, input := range inputs {
+		if elapsed < input.duration {
+			return i
+		}
+		elapsed -= input.duration
+	}
+	return len(inputs) - 1
+}
+
+// streamConcatPlaylist streams resolved local or Plex videos as a single
+// normalized ffmpeg instance. This avoids RTMP reconnection between videos.
+func (w *StreamWorker) streamConcatPlaylist(ctx context.Context, inputs []concatInput, loop bool) error {
 	var buf strings.Builder
-	for _, path := range videos {
+	for _, input := range inputs {
 		// Escape single quotes for ffmpeg concat
-		escaped := strings.ReplaceAll(path, "'", "'\\\\''")
+		escaped := strings.ReplaceAll(input.resolved, "'", "'\\\\''")
 		buf.WriteString(`file '`)
 		buf.WriteString(escaped)
 		buf.WriteString("'\n")
@@ -685,26 +792,40 @@ func (w *StreamWorker) streamConcatPlaylist(ctx context.Context, pl *playlist.Pl
 		return fmt.Errorf("close concat: %w", err)
 	}
 
-	log.Printf("[concat] Streaming %d videos via concat demuxer", len(videos))
+	log.Printf("[concat] Streaming %d videos via concat demuxer", len(inputs))
 
-	args := []string{"-hide_banner", "-loglevel", "warning"}
+	args := []string{"-hide_banner", "-loglevel", "warning", "-nostats", "-progress", "pipe:1"}
 	if w.cfg.Streamer.Realtime {
 		args = append(args, "-re")
 	}
-	args = append(args, "-f", "concat", "-safe", "0", "-i", concatPath)
-
-	if transcodeNeed {
-		args = append(args, "-c:v", "libx264", "-preset", "veryfast", "-crf", "23")
-	} else {
-		args = append(args, "-c:v", "copy")
+	if loop {
+		args = append(args, "-stream_loop", "-1")
 	}
-	args = append(args, "-c:a", "aac", "-ar", "44100", "-f", "flv", w.cfg.Owncast.RTMPIngestURL())
+	args = append(args, "-protocol_whitelist", "file,http,https,tcp,tls,crypto,data", "-f", "concat", "-safe", "0", "-i", concatPath)
 
-	return w.runConcatFFmpeg(ctx, args)
+	width, height, fps := w.cfg.Streamer.HoldWidth, w.cfg.Streamer.HoldHeight, w.cfg.Streamer.HoldFPS
+	if width <= 0 {
+		width = 1280
+	}
+	if height <= 0 {
+		height = 720
+	}
+	if fps <= 0 {
+		fps = 30
+	}
+	filter := fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=%d,format=yuv420p", width, height, width, height, fps)
+	args = append(args,
+		"-map", "0:v:0", "-map", "0:a:0?", "-sn", "-dn",
+		"-vf", filter,
+		"-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-g", strconv.Itoa(fps*2),
+		"-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-af", "aresample=async=1:first_pts=0",
+		"-f", "flv", w.cfg.Owncast.RTMPIngestURL())
+
+	return w.runConcatFFmpeg(ctx, args, inputs)
 }
 
 // runConcatFFmpeg runs a single ffmpeg process with the given args and handles commands.
-func (w *StreamWorker) runConcatFFmpeg(ctx context.Context, args []string) error {
+func (w *StreamWorker) runConcatFFmpeg(ctx context.Context, args []string, inputs []concatInput) error {
 	ffCtx, ffCancel := context.WithCancel(ctx)
 	defer ffCancel()
 
@@ -718,6 +839,10 @@ func (w *StreamWorker) runConcatFFmpeg(ctx context.Context, args []string) error
 	}()
 
 	cmd := exec.CommandContext(ffCtx, w.cfg.Streamer.FFmpegPath, args...)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("stdout pipe: %w", err)
+	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
 		return fmt.Errorf("stderr pipe: %w", err)
@@ -725,12 +850,41 @@ func (w *StreamWorker) runConcatFFmpeg(ctx context.Context, args []string) error
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("ffmpeg start: %w", err)
 	}
+	w.ffmpegMu.Lock()
+	w.ffmpegCmd = cmd
+	w.ffmpegMu.Unlock()
+	defer func() {
+		w.ffmpegMu.Lock()
+		w.ffmpegCmd = nil
+		w.ffmpegMu.Unlock()
+	}()
 
-	// Read stderr for logging
+	progress := bufio.NewScanner(stdout)
+	go func() {
+		lastPosition := -1
+		for progress.Scan() {
+			line := progress.Text()
+			if !strings.HasPrefix(line, "out_time_us=") {
+				continue
+			}
+			micros, err := strconv.ParseFloat(strings.TrimPrefix(line, "out_time_us="), 64)
+			if err != nil {
+				continue
+			}
+			position := concatPosition(micros/1_000_000, inputs)
+			w.index.Store(int32(inputs[position].index))
+			w.current.Store(inputs[position].original)
+			if position != lastPosition {
+				log.Printf("[continuous] Now playing item %d", inputs[position].index+1)
+				lastPosition = position
+			}
+		}
+	}()
+
 	sc := bufio.NewScanner(stderr)
 	go func() {
 		for sc.Scan() {
-			log.Printf("[ffmpeg] %s", sc.Text())
+			log.Printf("[ffmpeg] %s", w.redactSecrets(sc.Text()))
 		}
 	}()
 
@@ -745,6 +899,19 @@ func (w *StreamWorker) runConcatFFmpeg(ctx context.Context, args []string) error
 		return fmt.Errorf("ffmpeg: %w", err)
 	}
 	return nil
+}
+
+func (w *StreamWorker) redactSecrets(line string) string {
+	secrets := []string{w.cfg.Owncast.StreamKey, w.cfg.Streamer.RealDebridToken}
+	for _, server := range w.cfg.Plex.Servers {
+		secrets = append(secrets, server.Token)
+	}
+	for _, secret := range secrets {
+		if secret != "" {
+			line = strings.ReplaceAll(line, secret, "[redacted]")
+		}
+	}
+	return line
 }
 
 // streamOne runs ffmpeg to push a single URL/file to RTMP.
@@ -807,7 +974,7 @@ func (w *StreamWorker) streamOne(ctx context.Context, streamURL string, localFil
 	go func() {
 		sc := bufio.NewScanner(stderr)
 		for sc.Scan() {
-			log.Printf("[ffmpeg] %s", sc.Text())
+			log.Printf("[ffmpeg] %s", w.redactSecrets(sc.Text()))
 		}
 		wg.Done()
 	}()

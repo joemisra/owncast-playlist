@@ -44,3 +44,39 @@ func TestRemoveBeforeCurrentAdjustsCursor(t *testing.T) {
 		t.Fatalf("current item=%q, want c", got)
 	}
 }
+
+func TestConcatPositionTracksBoundariesAndLoops(t *testing.T) {
+	inputs := []concatInput{
+		{duration: 8},
+		{duration: 10},
+		{duration: 12},
+	}
+	tests := []struct {
+		elapsed float64
+		want    int
+	}{
+		{0, 0},
+		{7.99, 0},
+		{8, 1},
+		{17.99, 1},
+		{18, 2},
+		{30, 0},
+		{38, 1},
+	}
+	for _, test := range tests {
+		if got := concatPosition(test.elapsed, inputs); got != test.want {
+			t.Errorf("concatPosition(%v) = %d, want %d", test.elapsed, got, test.want)
+		}
+	}
+}
+
+func TestRedactSecrets(t *testing.T) {
+	w := New(&config.Config{
+		Owncast: config.OwncastConfig{StreamKey: "stream-secret"},
+		Plex:    config.PlexConfig{Servers: []config.PlexServerConfig{{Token: "plex-secret"}}},
+	})
+	got := w.redactSecrets("rtmp stream-secret url?X-Plex-Token=plex-secret")
+	if got != "rtmp [redacted] url?X-Plex-Token=[redacted]" {
+		t.Fatalf("redacted line = %q", got)
+	}
+}
