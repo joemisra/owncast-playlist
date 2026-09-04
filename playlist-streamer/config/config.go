@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"gopkg.in/yaml.v3"
 )
@@ -43,21 +44,25 @@ func (o *OwncastConfig) RTMPIngestURL() string {
 
 // StreamerConfig holds ffmpeg and yt-dlp options.
 type StreamerConfig struct {
-	FFmpegPath         string `yaml:"ffmpeg_path"`          // path to ffmpeg, empty = "ffmpeg"
-	YtdlpPath          string `yaml:"ytdlp_path"`           // path to yt-dlp, empty = "yt-dlp"
-	CookiesFile        string `yaml:"cookies_file"`         // Netscape cookies.txt
-	CookiesFromBrowser string `yaml:"cookies_from_browser"` // e.g. "chrome", "firefox"
-	TempDir            string `yaml:"temp_dir"`             // directory for downloads, empty = data/tmp
-	Realtime           bool   `yaml:"realtime"`             // use -re for realtime
-	LoopPlaylist       bool   `yaml:"loop_playlist"`        // when playlist ends, start over
-	MaxRetries         int    `yaml:"max_retries"`          // retries per video before skipping (default 2)
-	DelayBetween       int    `yaml:"delay_between"`        // seconds between videos to avoid rate limits (default 10)
-	HoldWidth          int    `yaml:"hold_width"`           // blue holding pattern width (default 1280)
-	HoldHeight         int    `yaml:"hold_height"`          // blue holding pattern height (default 720)
-	HoldFPS            int    `yaml:"hold_fps"`             // holding pattern frame rate (default 30)
-	RealDebridToken    string `yaml:"realdebrid_token"`     // Real-Debrid API token from https://real-debrid.com/apitoken
-	Subtitles          bool   `yaml:"subtitles"`            // start with subtitles burned into video
-	SubtitleLang       string `yaml:"subtitle_lang"`        // subtitle language for yt-dlp downloads (default: "en")
+	FFmpegPath         string `yaml:"ffmpeg_path"`            // path to ffmpeg, empty = "ffmpeg"
+	YtdlpPath          string `yaml:"ytdlp_path"`             // path to yt-dlp, empty = "yt-dlp"
+	CookiesFile        string `yaml:"cookies_file"`           // Netscape cookies.txt
+	CookiesFromBrowser string `yaml:"cookies_from_browser"`   // e.g. "chrome", "firefox"
+	TempDir            string `yaml:"temp_dir"`               // directory for downloads, empty = data/tmp
+	Realtime           bool   `yaml:"realtime"`               // use -re for realtime
+	LoopPlaylist       bool   `yaml:"loop_playlist"`          // when playlist ends, start over
+	MaxRetries         int    `yaml:"max_retries"`            // retries per video before skipping (default 2)
+	DelayBetween       int    `yaml:"delay_between"`          // seconds between videos to avoid rate limits (default 10)
+	HoldWidth          int    `yaml:"hold_width"`             // blue holding pattern width (default 1280)
+	HoldHeight         int    `yaml:"hold_height"`            // blue holding pattern height (default 720)
+	HoldFPS            int    `yaml:"hold_fps"`               // holding pattern frame rate (default 30)
+	RealDebridToken    string `yaml:"realdebrid_token"`       // Real-Debrid API token from https://real-debrid.com/apitoken
+	Subtitles          bool   `yaml:"subtitles"`              // start with subtitles burned into video
+	SubtitleLang       string `yaml:"subtitle_lang"`          // subtitle language for yt-dlp downloads (default: "en")
+	PlexCacheEnabled   bool   `yaml:"plex_cache_enabled"`     // download Plex media before playback
+	PlexCacheDir       string `yaml:"plex_cache_dir"`         // persistent Plex media cache
+	PlexCacheMaxGB     int64  `yaml:"plex_cache_max_gb"`      // soft cache size limit (default 20 GB)
+	PlexCacheMinFreeGB int64  `yaml:"plex_cache_min_free_gb"` // minimum free disk space to preserve (default 10 GB)
 }
 
 // Load reads config from path.
@@ -89,6 +94,15 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Streamer.TempDir == "" {
 		c.Streamer.TempDir = "data/tmp"
+	}
+	if c.Streamer.PlexCacheDir == "" {
+		c.Streamer.PlexCacheDir = filepath.Join(c.Streamer.TempDir, "plex-cache")
+	}
+	if c.Streamer.PlexCacheMaxGB == 0 {
+		c.Streamer.PlexCacheMaxGB = 20
+	}
+	if c.Streamer.PlexCacheMinFreeGB == 0 {
+		c.Streamer.PlexCacheMinFreeGB = 10
 	}
 	if c.Streamer.MaxRetries == 0 {
 		c.Streamer.MaxRetries = 2

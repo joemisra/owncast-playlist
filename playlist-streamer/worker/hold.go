@@ -25,7 +25,7 @@ func (w *StreamWorker) buildHoldingArgs() []string {
 		"-f", "lavfi", "-i", color,
 		"-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
 		"-c:v", "libx264", "-preset", "veryfast", "-tune", "stillimage", "-pix_fmt", "yuv420p",
-		"-g", fmt.Sprintf("%d", gop),
+		"-g", fmt.Sprintf("%d", gop), "-keyint_min", fmt.Sprintf("%d", gop), "-sc_threshold", "0",
 		"-c:a", "aac", "-b:a", "128k", "-ar", "44100",
 		"-f", "flv", w.cfg.Owncast.RTMPIngestURL(),
 	}

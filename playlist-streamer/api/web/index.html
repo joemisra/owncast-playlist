@@ -139,6 +139,9 @@
           <label>Subtitle language <input id="cfg-subtitle-lang" type="text" maxlength="16"></label>
           <label>Maximum retries <input id="cfg-max-retries" type="number" min="1" max="20"></label>
           <label>Delay between videos (seconds) <input id="cfg-delay" type="number" min="0" max="3600"></label>
+          <label><input id="cfg-plex-cache" type="checkbox"> Cache Plex files before playback</label>
+          <label>Plex cache limit (GB) <input id="cfg-plex-cache-max" type="number" min="1" max="1000"></label>
+          <label>Disk space to keep free (GB) <input id="cfg-plex-cache-reserve" type="number" min="1" max="1000"></label>
           <h3>YouTube authentication</h3>
           <p id="youtube-cookie-status" class="hint"></p>
           <div class="config-actions youtube-cookie-actions">

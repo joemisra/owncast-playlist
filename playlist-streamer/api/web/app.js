@@ -194,7 +194,10 @@ function renderStatus(s) {
   } else if (s.phase === 'downloading') {
     el.indicator.className = 'dot paused';
     el.statusText.textContent = 'Downloading';
-    el.statusDetail.textContent = s.currentUrl ? `— ${trimUrl(s.currentUrl)}` : '— preparing media';
+    const progress = s.cacheTotalBytes > 0
+      ? `${Math.floor((s.cacheBytes / s.cacheTotalBytes) * 100)}% · ${formatBytes(s.cacheBytes)} of ${formatBytes(s.cacheTotalBytes)}`
+      : 'preparing media';
+    el.statusDetail.textContent = `— ${progress}${s.currentUrl ? ` · ${trimUrl(s.currentUrl)}` : ''}`;
   } else if (s.phase === 'resolving') {
     el.indicator.className = 'dot paused';
     el.statusText.textContent = 'Resolving media';
@@ -605,6 +608,9 @@ function renderConfig(settings) {
   $('#cfg-subtitle-lang').value = settings.streamer.subtitleLang || 'en';
   $('#cfg-max-retries').value = settings.streamer.maxRetries;
   $('#cfg-delay').value = settings.streamer.delayBetween;
+  $('#cfg-plex-cache').checked = settings.streamer.plexCacheEnabled;
+  $('#cfg-plex-cache-max').value = settings.streamer.plexCacheMaxGB;
+  $('#cfg-plex-cache-reserve').value = settings.streamer.plexCacheMinFreeGB;
   $('#youtube-cookie-status').textContent = settings.youtube?.hasCookies ? 'A cookies.txt file is configured.' : 'No cookies configured; YouTube may reject downloads as bot traffic.';
   fetchOwncastTitle();
 }
@@ -664,6 +670,9 @@ async function saveConfig(event) {
     subtitleLang: $('#cfg-subtitle-lang').value.trim(),
     maxRetries: Number($('#cfg-max-retries').value),
     delayBetween: Number($('#cfg-delay').value),
+    plexCacheEnabled: $('#cfg-plex-cache').checked,
+    plexCacheMaxGB: Number($('#cfg-plex-cache-max').value),
+    plexCacheMinFreeGB: Number($('#cfg-plex-cache-reserve').value),
   }};
   if (!confirm('Save settings and restart the stream service?')) return;
   try {
@@ -684,6 +693,13 @@ function trimUrl(u) {
   }
   if (u.length > 60) return u.slice(0, 57) + '…';
   return u;
+}
+
+function formatBytes(value) {
+  const bytes = Number(value) || 0;
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+  if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(0)} MB`;
+  return `${Math.max(0, Math.round(bytes / 1024))} KB`;
 }
 
 function esc(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'); }

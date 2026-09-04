@@ -400,12 +400,15 @@ type configResp struct {
 		Servers []configServerResp `json:"servers"`
 	} `json:"plex"`
 	Streamer struct {
-		LoopPlaylist bool   `json:"loopPlaylist"`
-		Realtime     bool   `json:"realtime"`
-		MaxRetries   int    `json:"maxRetries"`
-		DelayBetween int    `json:"delayBetween"`
-		Subtitles    bool   `json:"subtitles"`
-		SubtitleLang string `json:"subtitleLang"`
+		LoopPlaylist       bool   `json:"loopPlaylist"`
+		Realtime           bool   `json:"realtime"`
+		MaxRetries         int    `json:"maxRetries"`
+		DelayBetween       int    `json:"delayBetween"`
+		Subtitles          bool   `json:"subtitles"`
+		SubtitleLang       string `json:"subtitleLang"`
+		PlexCacheEnabled   bool   `json:"plexCacheEnabled"`
+		PlexCacheMaxGB     int64  `json:"plexCacheMaxGB"`
+		PlexCacheMinFreeGB int64  `json:"plexCacheMinFreeGB"`
 	} `json:"streamer"`
 	YouTube struct {
 		HasCookies bool `json:"hasCookies"`
@@ -417,12 +420,15 @@ type configUpdateBody struct {
 		Servers []struct{ Name, BaseURL, Token string } `json:"servers"`
 	} `json:"plex"`
 	Streamer struct {
-		LoopPlaylist bool   `json:"loopPlaylist"`
-		Realtime     bool   `json:"realtime"`
-		MaxRetries   int    `json:"maxRetries"`
-		DelayBetween int    `json:"delayBetween"`
-		Subtitles    bool   `json:"subtitles"`
-		SubtitleLang string `json:"subtitleLang"`
+		LoopPlaylist       bool   `json:"loopPlaylist"`
+		Realtime           bool   `json:"realtime"`
+		MaxRetries         int    `json:"maxRetries"`
+		DelayBetween       int    `json:"delayBetween"`
+		Subtitles          bool   `json:"subtitles"`
+		SubtitleLang       string `json:"subtitleLang"`
+		PlexCacheEnabled   bool   `json:"plexCacheEnabled"`
+		PlexCacheMaxGB     int64  `json:"plexCacheMaxGB"`
+		PlexCacheMinFreeGB int64  `json:"plexCacheMinFreeGB"`
 	} `json:"streamer"`
 }
 
@@ -439,6 +445,9 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		response.Streamer.DelayBetween = s.cfg.Streamer.DelayBetween
 		response.Streamer.Subtitles = s.cfg.Streamer.Subtitles
 		response.Streamer.SubtitleLang = s.cfg.Streamer.SubtitleLang
+		response.Streamer.PlexCacheEnabled = s.cfg.Streamer.PlexCacheEnabled
+		response.Streamer.PlexCacheMaxGB = s.cfg.Streamer.PlexCacheMaxGB
+		response.Streamer.PlexCacheMinFreeGB = s.cfg.Streamer.PlexCacheMinFreeGB
 		response.YouTube.HasCookies = s.cfg.Streamer.CookiesFile != ""
 		s.writeJSON(w, response)
 	case http.MethodPost:
@@ -498,6 +507,12 @@ func (s *Server) applyConfigUpdate(body configUpdateBody) error {
 	if body.Streamer.DelayBetween < 0 || body.Streamer.DelayBetween > 3600 {
 		return fmt.Errorf("delay must be between 0 and 3600 seconds")
 	}
+	if body.Streamer.PlexCacheEnabled && (body.Streamer.PlexCacheMaxGB < 1 || body.Streamer.PlexCacheMaxGB > 1000) {
+		return fmt.Errorf("Plex cache limit must be between 1 and 1000 GB")
+	}
+	if body.Streamer.PlexCacheEnabled && (body.Streamer.PlexCacheMinFreeGB < 1 || body.Streamer.PlexCacheMinFreeGB > 1000) {
+		return fmt.Errorf("Plex cache disk reserve must be between 1 and 1000 GB")
+	}
 	s.cfg.Plex.Servers = servers
 	s.cfg.Streamer.LoopPlaylist = body.Streamer.LoopPlaylist
 	s.cfg.Streamer.Realtime = body.Streamer.Realtime
@@ -505,6 +520,9 @@ func (s *Server) applyConfigUpdate(body configUpdateBody) error {
 	s.cfg.Streamer.DelayBetween = body.Streamer.DelayBetween
 	s.cfg.Streamer.Subtitles = body.Streamer.Subtitles
 	s.cfg.Streamer.SubtitleLang = strings.TrimSpace(body.Streamer.SubtitleLang)
+	s.cfg.Streamer.PlexCacheEnabled = body.Streamer.PlexCacheEnabled
+	s.cfg.Streamer.PlexCacheMaxGB = body.Streamer.PlexCacheMaxGB
+	s.cfg.Streamer.PlexCacheMinFreeGB = body.Streamer.PlexCacheMinFreeGB
 	if s.cfg.Streamer.SubtitleLang == "" {
 		s.cfg.Streamer.SubtitleLang = "en"
 	}
@@ -597,6 +615,8 @@ type statusResp struct {
 	TotalVideos  int    `json:"totalVideos"`
 	PlaylistName string `json:"playlistName"`
 	Phase        string `json:"phase"`
+	CacheBytes   int64  `json:"cacheBytes,omitempty"`
+	CacheTotal   int64  `json:"cacheTotalBytes,omitempty"`
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -605,6 +625,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name, videos, curIdx := s.worker.PlaylistSnapshot()
+	cacheBytes, cacheTotal := s.worker.CacheProgress()
 	resp := statusResp{
 		Playing:      s.worker.IsPlaying(),
 		Paused:       s.worker.IsPaused(),
@@ -614,6 +635,8 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		TotalVideos:  len(videos),
 		PlaylistName: name,
 		Phase:        s.worker.Phase(),
+		CacheBytes:   cacheBytes,
+		CacheTotal:   cacheTotal,
 	}
 	s.writeJSON(w, resp)
 }

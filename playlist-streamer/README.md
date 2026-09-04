@@ -69,6 +69,12 @@ plex:
     - name: home
       base_url: "http://plex.example:32400"
       token: "your-X-Plex-Token"
+
+streamer:
+  plex_cache_enabled: true
+  plex_cache_dir: "data/tmp/plex-cache"
+  plex_cache_max_gb: 20
+  plex_cache_min_free_gb: 10
 ```
 
 Treat the Plex token like a password and keep it out of Git. The dashboard's
@@ -81,10 +87,18 @@ Use the filter to search titles or filenames, then select `+` beside a file to
 add its stable `plex://server/rating-key` URL to the current playlist. Plex
 tokens and direct media URLs are never stored in playlist files.
 
-Multi-item Plex and local-file playlists are normalized to a consistent video
-and audio format and published through one FFmpeg/RTMP connection. Natural item
-transitions therefore remain inside the same Owncast live session. Manual
-skip/jump operations still restart the publisher at the requested item.
+When the Plex cache is enabled, media is downloaded completely before playback.
+Interrupted downloads remain as `.partial` files and resume on the next attempt.
+Older files are removed least-recently-used while preserving both the configured
+cache limit and minimum free disk space. Cache filenames are opaque and never
+contain Plex URLs or tokens.
+
+Plex and local-file playlists are normalized to a consistent 720p video and
+audio format with fixed two-second keyframes, then published through one
+FFmpeg/RTMP connection. This applies to single-item playlists as well. Natural
+item transitions therefore remain inside the same Owncast live session, and an
+Owncast output configured for passthrough can segment the stream cleanly.
+Manual skip/jump operations still restart the publisher at the requested item.
 
 Plex must report media-part URLs that are readable from the streaming server.
 The dashboard can still list cached Plex metadata when the underlying library

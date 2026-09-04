@@ -33,14 +33,17 @@ const (
 
 // StreamWorker streams videos from a playlist to Owncast via RTMP.
 type StreamWorker struct {
-	cfg      *config.Config
-	registry *providers.Registry
-	cmdCh    chan Command
-	paused   atomic.Bool
-	playing  atomic.Bool
-	current  atomic.Value // stores string (current URL)
-	phase    atomic.Value // idle, resolving, downloading, streaming, holding, retrying
-	index    atomic.Int32
+	cfg        *config.Config
+	registry   *providers.Registry
+	plexCache  *plexCache
+	cmdCh      chan Command
+	paused     atomic.Bool
+	playing    atomic.Bool
+	current    atomic.Value // stores string (current URL)
+	phase      atomic.Value // idle, resolving, downloading, streaming, holding, retrying
+	index      atomic.Int32
+	cacheBytes atomic.Int64
+	cacheTotal atomic.Int64
 
 	playlistMu sync.RWMutex
 	playlist   *playlist.Playlist
@@ -84,6 +87,9 @@ func New(cfg *config.Config) *StreamWorker {
 		registry: reg,
 		cmdCh:    make(chan Command, 8),
 	}
+	if cfg.Streamer.PlexCacheEnabled {
+		w.plexCache = newPlexCache(cfg.Streamer)
+	}
 	w.subtitles.Store(cfg.Streamer.Subtitles)
 	w.phase.Store("idle")
 	w.jumpIndex.Store(-1)
@@ -101,6 +107,9 @@ func (w *StreamWorker) CurrentURL() string {
 	return ""
 }
 func (w *StreamWorker) CurrentIndex() int { return int(w.index.Load()) }
+func (w *StreamWorker) CacheProgress() (int64, int64) {
+	return w.cacheBytes.Load(), w.cacheTotal.Load()
+}
 func (w *StreamWorker) Phase() string {
 	if value := w.phase.Load(); value != nil {
 		return value.(string)
@@ -288,6 +297,8 @@ func (w *StreamWorker) StreamPlaylist(ctx context.Context, pl *playlist.Playlist
 	w.stopped.Store(false)
 	w.skipped.Store(false)
 	w.restart.Store(false)
+	w.cacheBytes.Store(0)
+	w.cacheTotal.Store(0)
 	defer func() { w.playing.Store(false); w.phase.Store("idle") }()
 
 	cmdCtx, cmdCancel := context.WithCancel(ctx)
@@ -652,15 +663,41 @@ type concatInput struct {
 	index    int
 }
 
-// streamContinuousPlaylist handles multi-item local and Plex playlists with a
+// streamContinuousPlaylist handles local and Plex playlists with a
 // single normalized RTMP publisher. It returns handled=false for providers
 // that need their existing per-item path, such as YouTube.
 func (w *StreamWorker) streamContinuousPlaylist(ctx context.Context, pl *playlist.Playlist) (bool, error) {
-	if pl == nil || len(pl.Videos) < 2 {
+	if pl == nil || len(pl.Videos) == 0 {
 		return false, nil
 	}
 
 	inputs := make([]concatInput, 0, len(pl.Videos))
+	protectedCachePaths := make(map[string]bool)
+	var cacheHoldCancel context.CancelFunc
+	var cacheHoldDone chan struct{}
+	startCacheHold := func() {
+		if cacheHoldCancel != nil {
+			return
+		}
+		holdCtx, cancel := context.WithCancel(ctx)
+		cacheHoldCancel = cancel
+		cacheHoldDone = make(chan struct{})
+		go func() {
+			defer close(cacheHoldDone)
+			_ = w.runHoldingFFmpeg(holdCtx)
+		}()
+	}
+	stopCacheHold := func() {
+		if cacheHoldCancel == nil {
+			return
+		}
+		cacheHoldCancel()
+		<-cacheHoldDone
+		cacheHoldCancel = nil
+		cacheHoldDone = nil
+	}
+	defer stopCacheHold()
+
 	for i, entry := range pl.Videos {
 		providerName := entry.Provider
 		if providerName == "" {
@@ -675,9 +712,34 @@ func (w *StreamWorker) streamContinuousPlaylist(ctx context.Context, pl *playlis
 			log.Printf("[continuous] Could not prepare item %d; using per-item streaming: %v", i+1, err)
 			return false, nil
 		}
+		if provider.Name() == "plex" && w.plexCache != nil {
+			cachePath, hit := w.plexCache.cachedPath(entry.URL, resolved)
+			if !hit {
+				startCacheHold()
+				w.current.Store(entry.URL)
+				w.index.Store(int32(i))
+				w.phase.Store("downloading")
+				log.Printf("[plex-cache] Caching item %d of %d", i+1, len(pl.Videos))
+			} else {
+				log.Printf("[plex-cache] Using cached item %d of %d", i+1, len(pl.Videos))
+			}
+			cachePath, err = w.plexCache.fetch(ctx, entry.URL, resolved, protectedCachePaths, func(received, total int64) {
+				w.cacheBytes.Store(received)
+				w.cacheTotal.Store(total)
+			})
+			if err != nil {
+				stopCacheHold()
+				return true, fmt.Errorf("cache Plex item %d: %w", i+1, err)
+			}
+			resolved = cachePath
+		}
 		duration := w.mediaDuration(ctx, resolved)
 		log.Printf("[continuous] Prepared item %d (%0.3fs)", i+1, duration)
 		if duration <= 0 {
+			if provider.Name() == "plex" && w.plexCache != nil {
+				stopCacheHold()
+				return true, fmt.Errorf("cached Plex item %d is not readable", i+1)
+			}
 			log.Printf("[continuous] Item %d is not readable; using per-item retry handling", i+1)
 			return false, nil
 		}
@@ -688,6 +750,7 @@ func (w *StreamWorker) streamContinuousPlaylist(ctx context.Context, pl *playlis
 			index:    i,
 		})
 	}
+	stopCacheHold()
 
 	start := 0
 	for {
@@ -698,7 +761,8 @@ func (w *StreamWorker) streamContinuousPlaylist(ctx context.Context, pl *playlis
 		w.phase.Store("streaming")
 		log.Printf("[continuous] Publishing %d items over one RTMP connection", len(ordered))
 
-		err := w.streamConcatPlaylist(ctx, ordered, w.cfg.Streamer.LoopPlaylist)
+		loop := w.cfg.Streamer.LoopPlaylist || len(inputs) == 1
+		err := w.streamConcatPlaylist(ctx, ordered, loop)
 		if ctx.Err() != nil {
 			return true, ctx.Err()
 		}
@@ -817,7 +881,8 @@ func (w *StreamWorker) streamConcatPlaylist(ctx context.Context, inputs []concat
 	args = append(args,
 		"-map", "0:v:0", "-map", "0:a:0?", "-sn", "-dn",
 		"-vf", filter,
-		"-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-g", strconv.Itoa(fps*2),
+		"-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+		"-g", strconv.Itoa(fps*2), "-keyint_min", strconv.Itoa(fps*2), "-sc_threshold", "0",
 		"-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-af", "aresample=async=1:first_pts=0",
 		"-f", "flv", w.cfg.Owncast.RTMPIngestURL())
 
