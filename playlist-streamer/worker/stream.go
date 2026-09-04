@@ -709,6 +709,10 @@ func (w *StreamWorker) streamContinuousPlaylist(ctx context.Context, pl *playlis
 		}
 		resolved, err := provider.GetStreamURL(entry.URL)
 		if err != nil {
+			if provider.Name() == "plex" && w.plexCache != nil {
+				log.Printf("[plex-cache] Skipping unavailable item %d: %v", i+1, err)
+				continue
+			}
 			log.Printf("[continuous] Could not prepare item %d; using per-item streaming: %v", i+1, err)
 			return false, nil
 		}
@@ -728,8 +732,12 @@ func (w *StreamWorker) streamContinuousPlaylist(ctx context.Context, pl *playlis
 				w.cacheTotal.Store(total)
 			})
 			if err != nil {
-				stopCacheHold()
-				return true, fmt.Errorf("cache Plex item %d: %w", i+1, err)
+				if ctx.Err() != nil {
+					stopCacheHold()
+					return true, ctx.Err()
+				}
+				log.Printf("[plex-cache] Skipping item %d after cache failure: %v", i+1, err)
+				continue
 			}
 			resolved = cachePath
 		}
@@ -737,8 +745,8 @@ func (w *StreamWorker) streamContinuousPlaylist(ctx context.Context, pl *playlis
 		log.Printf("[continuous] Prepared item %d (%0.3fs)", i+1, duration)
 		if duration <= 0 {
 			if provider.Name() == "plex" && w.plexCache != nil {
-				stopCacheHold()
-				return true, fmt.Errorf("cached Plex item %d is not readable", i+1)
+				log.Printf("[plex-cache] Skipping unreadable cached item %d", i+1)
+				continue
 			}
 			log.Printf("[continuous] Item %d is not readable; using per-item retry handling", i+1)
 			return false, nil
@@ -751,6 +759,9 @@ func (w *StreamWorker) streamContinuousPlaylist(ctx context.Context, pl *playlis
 		})
 	}
 	stopCacheHold()
+	if len(inputs) == 0 {
+		return true, fmt.Errorf("no playable local or cached Plex items")
+	}
 
 	start := 0
 	for {
