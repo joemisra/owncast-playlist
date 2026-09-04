@@ -727,10 +727,24 @@ func (w *StreamWorker) streamContinuousPlaylist(ctx context.Context, pl *playlis
 			} else {
 				log.Printf("[plex-cache] Using cached item %d of %d", i+1, len(pl.Videos))
 			}
-			cachePath, err = w.plexCache.fetch(ctx, entry.URL, resolved, protectedCachePaths, func(received, total int64) {
-				w.cacheBytes.Store(received)
-				w.cacheTotal.Store(total)
-			})
+			for {
+				cachePath, err = w.plexCache.fetch(ctx, entry.URL, resolved, protectedCachePaths, func(received, total int64) {
+					w.cacheBytes.Store(received)
+					w.cacheTotal.Store(total)
+				})
+				if err == nil || !isTemporaryPlexCacheError(err) {
+					break
+				}
+				log.Printf("[plex-cache] Download interrupted; resuming item %d in 5 seconds: %v", i+1, err)
+				select {
+				case <-ctx.Done():
+					err = ctx.Err()
+				case <-time.After(5 * time.Second):
+				}
+				if ctx.Err() != nil {
+					break
+				}
+			}
 			if err != nil {
 				if ctx.Err() != nil {
 					stopCacheHold()

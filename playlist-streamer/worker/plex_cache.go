@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -20,6 +21,18 @@ import (
 )
 
 const minimumCachedMediaSize = 100_000
+
+type temporaryPlexCacheError struct {
+	err error
+}
+
+func (e temporaryPlexCacheError) Error() string { return e.err.Error() }
+func (e temporaryPlexCacheError) Unwrap() error { return e.err }
+
+func isTemporaryPlexCacheError(err error) bool {
+	var temporary temporaryPlexCacheError
+	return errors.As(err, &temporary)
+}
 
 // plexCache stores complete Plex media files under opaque names. Direct Plex
 // URLs (and their credentials) are never used as filenames or log labels.
@@ -85,7 +98,7 @@ func (c *plexCache) fetch(ctx context.Context, cacheKey, sourceURL string, prote
 		}
 		// net/http errors include the request URL. Do not return it because the
 		// Plex token may be present in the query string.
-		return "", fmt.Errorf("Plex cache request failed")
+		return "", temporaryPlexCacheError{err: fmt.Errorf("Plex cache request failed")}
 	}
 	defer resp.Body.Close()
 
@@ -108,6 +121,9 @@ func (c *plexCache) fetch(ctx context.Context, cacheKey, sourceURL string, prote
 		}
 		return "", fmt.Errorf("Plex cache resume was rejected (HTTP %d)", resp.StatusCode)
 	default:
+		if resp.StatusCode == http.StatusRequestTimeout || resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
+			return "", temporaryPlexCacheError{err: fmt.Errorf("Plex cache returned HTTP %d", resp.StatusCode)}
+		}
 		return "", fmt.Errorf("Plex cache returned HTTP %d", resp.StatusCode)
 	}
 
@@ -147,7 +163,7 @@ func (c *plexCache) fetch(ctx context.Context, cacheKey, sourceURL string, prote
 		if ctx.Err() != nil {
 			return "", ctx.Err()
 		}
-		return "", fmt.Errorf("write Plex cache: %w", copyErr)
+		return "", temporaryPlexCacheError{err: fmt.Errorf("write Plex cache: %w", copyErr)}
 	}
 	if syncErr != nil {
 		return "", fmt.Errorf("sync Plex cache: %w", syncErr)
@@ -156,7 +172,7 @@ func (c *plexCache) fetch(ctx context.Context, cacheKey, sourceURL string, prote
 		return "", fmt.Errorf("close Plex cache: %w", closeErr)
 	}
 	if offset+written != totalSize {
-		return "", fmt.Errorf("Plex cache download incomplete: received %d of %d bytes", offset+written, totalSize)
+		return "", temporaryPlexCacheError{err: fmt.Errorf("Plex cache download incomplete: received %d of %d bytes", offset+written, totalSize)}
 	}
 	if err := os.Rename(partialPath, finalPath); err != nil {
 		return "", fmt.Errorf("complete Plex cache file: %w", err)

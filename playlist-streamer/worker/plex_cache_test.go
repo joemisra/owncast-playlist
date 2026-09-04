@@ -116,6 +116,9 @@ func TestPlexCacheErrorDoesNotExposeToken(t *testing.T) {
 	if strings.Contains(err.Error(), token) {
 		t.Fatalf("token leaked in error: %v", err)
 	}
+	if !isTemporaryPlexCacheError(err) {
+		t.Fatalf("HTTP 502 should be retriable: %v", err)
+	}
 }
 
 func testPlexCache(t *testing.T, client *http.Client) *plexCache {
