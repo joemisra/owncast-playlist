@@ -1,10 +1,6 @@
 param(
-    [Parameter(Mandatory = $true)]
     [string]$MoviesRoot,
-
-    [Parameter(Mandatory = $true)]
     [string]$TVRoot,
-
     [string]$CouchUrl = "https://couch.dsp.coffee/stream",
     [ValidateRange(1, 12)]
     [int]$LookAhead = 3,
@@ -14,9 +10,23 @@ param(
 
 $ErrorActionPreference = "Stop"
 $CouchUrl = $CouchUrl.TrimEnd("/")
+
+function Resolve-MediaRoot([string]$ConfiguredPath, [string]$ShareName) {
+    if ($ConfiguredPath) {
+        return (Resolve-Path -LiteralPath $ConfiguredPath).Path
+    }
+    try {
+        $share = Get-SmbShare -Name $ShareName -ErrorAction Stop
+        return (Resolve-Path -LiteralPath $share.Path).Path
+    }
+    catch {
+        throw "Could not find the $ShareName share. Run again with its local folder path."
+    }
+}
+
 $roots = @{
-    "movies" = (Resolve-Path -LiteralPath $MoviesRoot).Path
-    "tv" = (Resolve-Path -LiteralPath $TVRoot).Path
+    "movies" = Resolve-MediaRoot $MoviesRoot "OwncastMovies"
+    "tv" = Resolve-MediaRoot $TVRoot "OwncastTV"
 }
 
 $secureToken = Read-Host "Couch manager password" -AsSecureString

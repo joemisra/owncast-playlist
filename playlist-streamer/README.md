@@ -133,13 +133,16 @@ entire playlist before it starts.
 
 For a faster public-internet path, `api/web/trees-cache-uploader.ps1` watches the
 active Couch playlist and sends only the next uncached Trees items over the
-authenticated HTTPS cache API. Run it on Trees with the local folders behind
-the `OwncastMovies` and `OwncastTV` shares. The manager password is requested as
-a secure prompt and is not stored by the script:
+authenticated HTTPS cache API. On Trees it automatically finds the local
+folders behind the `OwncastMovies` and `OwncastTV` shares. The manager password
+is requested as a secure prompt and is not stored by the script:
 
 ```powershell
-.\tools\trees-cache-uploader.ps1 -MoviesRoot 'D:\Movies' -TVRoot 'D:\TV'
+.\trees-cache-uploader.ps1
 ```
+
+If the share names differ, pass the local folders explicitly with
+`-MoviesRoot` and `-TVRoot`.
 
 The helper keeps three upcoming items cached by default. A completed public
 upload is preferred without reading the Tailscale SMB mount; the mounted SMB
