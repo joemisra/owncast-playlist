@@ -44,6 +44,7 @@ type StreamWorker struct {
 	index      atomic.Int32
 	cacheBytes atomic.Int64
 	cacheTotal atomic.Int64
+	media      mediaStatusStore
 
 	playlistMu sync.RWMutex
 	playlist   *playlist.Playlist
@@ -68,6 +69,11 @@ func New(cfg *config.Config) *StreamWorker {
 		plexServers = append(plexServers, providers.PlexServer{Name: s.Name, BaseURL: s.BaseURL, Token: s.Token})
 	}
 	reg.Register(providers.NewPlex(plexServers))
+	smbShares := make([]providers.SMBShare, 0, len(cfg.SMB.Shares))
+	for _, share := range cfg.SMB.Shares {
+		smbShares = append(smbShares, providers.SMBShare{Name: share.Name, Path: share.Path})
+	}
+	reg.Register(providers.NewSMB(smbShares))
 	if yt, ok := reg.Get("youtube").(*providers.YouTube); ok && yt != nil {
 		yt.SetYtdlpPath(cfg.Streamer.YtdlpPath)
 		if cfg.Streamer.CookiesFile != "" {
@@ -109,6 +115,9 @@ func (w *StreamWorker) CurrentURL() string {
 func (w *StreamWorker) CurrentIndex() int { return int(w.index.Load()) }
 func (w *StreamWorker) CacheProgress() (int64, int64) {
 	return w.cacheBytes.Load(), w.cacheTotal.Load()
+}
+func (w *StreamWorker) MediaItemStatuses() map[string]MediaItemStatus {
+	return w.media.snapshot()
 }
 func (w *StreamWorker) Phase() string {
 	if value := w.phase.Load(); value != nil {
@@ -299,13 +308,14 @@ func (w *StreamWorker) StreamPlaylist(ctx context.Context, pl *playlist.Playlist
 	w.restart.Store(false)
 	w.cacheBytes.Store(0)
 	w.cacheTotal.Store(0)
+	w.media.reset(pl, w.plexCache != nil)
 	defer func() { w.playing.Store(false); w.phase.Store("idle") }()
 
 	cmdCtx, cmdCancel := context.WithCancel(ctx)
 	defer cmdCancel()
 	go w.processCommands(cmdCtx)
 
-	// Local and Plex playlists can be normalized and published by one ffmpeg
+	// Local, SMB, and Plex playlists can be normalized and published by one ffmpeg
 	// process. Keeping that process alive prevents Owncast from seeing every
 	// item boundary (and the holding screen) as a brand-new RTMP stream.
 	if handled, err := w.streamContinuousPlaylist(ctx, pl); handled {
@@ -399,6 +409,7 @@ func (w *StreamWorker) StreamPlaylist(ctx context.Context, pl *playlist.Playlist
 		}
 		provider := w.registry.Get(providerName)
 		if provider == nil {
+			w.media.set(entry.URL, "failed", "Unknown media provider", 0, 0)
 			if providerName == "" {
 				log.Printf("Could not infer provider from URL, skipping: %s", entry.URL)
 			} else {
@@ -462,6 +473,7 @@ func (w *StreamWorker) StreamPlaylist(ctx context.Context, pl *playlist.Playlist
 		}
 
 		if lastErr != nil {
+			w.media.set(entry.URL, "failed", "Playback failed after all retry attempts", 0, 0)
 			log.Printf("Skipping %s after %d attempts: %v", entry.URL, w.cfg.Streamer.MaxRetries, lastErr)
 		}
 
@@ -663,6 +675,13 @@ type concatInput struct {
 	index    int
 }
 
+type smbCacheItem struct {
+	cacheKey   string
+	source     string
+	sourceSize int64
+	index      int
+}
+
 // streamContinuousPlaylist handles local and Plex playlists with a
 // single normalized RTMP publisher. It returns handled=false for providers
 // that need their existing per-item path, such as YouTube.
@@ -673,6 +692,7 @@ func (w *StreamWorker) streamContinuousPlaylist(ctx context.Context, pl *playlis
 
 	inputs := make([]concatInput, 0, len(pl.Videos))
 	protectedCachePaths := make(map[string]bool)
+	pendingSMB := make([]smbCacheItem, 0)
 	var cacheHoldCancel context.CancelFunc
 	var cacheHoldDone chan struct{}
 	startCacheHold := func() {
@@ -704,13 +724,14 @@ func (w *StreamWorker) streamContinuousPlaylist(ctx context.Context, pl *playlis
 			providerName = providers.InferProviderFromURL(entry.URL)
 		}
 		provider := w.registry.Get(providerName)
-		if provider == nil || provider.StreamViaPipe() || (provider.Name() != "local" && provider.Name() != "plex") {
+		if provider == nil || provider.StreamViaPipe() || (provider.Name() != "local" && provider.Name() != "plex" && provider.Name() != "smb") {
 			return false, nil
 		}
 		resolved, err := provider.GetStreamURL(entry.URL)
 		if err != nil {
-			if provider.Name() == "plex" && w.plexCache != nil {
-				log.Printf("[plex-cache] Skipping unavailable item %d: %v", i+1, err)
+			w.media.set(entry.URL, "failed", "The source is unavailable", 0, 0)
+			if (provider.Name() == "plex" && w.plexCache != nil) || provider.Name() == "smb" {
+				log.Printf("[media-cache] Skipping unavailable item %d: %v", i+1, err)
 				continue
 			}
 			log.Printf("[continuous] Could not prepare item %d; using per-item streaming: %v", i+1, err)
@@ -719,23 +740,26 @@ func (w *StreamWorker) streamContinuousPlaylist(ctx context.Context, pl *playlis
 		if provider.Name() == "plex" && w.plexCache != nil {
 			cachePath, hit := w.plexCache.cachedPath(entry.URL, resolved)
 			if !hit {
+				w.media.set(entry.URL, "caching", "Downloading to Couch", 0, 0)
 				startCacheHold()
 				w.current.Store(entry.URL)
 				w.index.Store(int32(i))
 				w.phase.Store("downloading")
-				log.Printf("[plex-cache] Caching item %d of %d", i+1, len(pl.Videos))
+				log.Printf("[media-cache] Caching Plex item %d of %d", i+1, len(pl.Videos))
 			} else {
-				log.Printf("[plex-cache] Using cached item %d of %d", i+1, len(pl.Videos))
+				w.media.set(entry.URL, "cached", "Ready on Couch", 0, 0)
+				log.Printf("[media-cache] Using cached Plex item %d of %d", i+1, len(pl.Videos))
 			}
 			for {
 				cachePath, err = w.plexCache.fetch(ctx, entry.URL, resolved, protectedCachePaths, func(received, total int64) {
 					w.cacheBytes.Store(received)
 					w.cacheTotal.Store(total)
+					w.media.set(entry.URL, "caching", "Downloading to Couch", received, total)
 				})
 				if err == nil || !isTemporaryPlexCacheError(err) {
 					break
 				}
-				log.Printf("[plex-cache] Download interrupted; resuming item %d in 5 seconds: %v", i+1, err)
+				log.Printf("[media-cache] Plex download interrupted; resuming item %d in 5 seconds: %v", i+1, err)
 				select {
 				case <-ctx.Done():
 					err = ctx.Err()
@@ -750,16 +774,61 @@ func (w *StreamWorker) streamContinuousPlaylist(ctx context.Context, pl *playlis
 					stopCacheHold()
 					return true, ctx.Err()
 				}
-				log.Printf("[plex-cache] Skipping item %d after cache failure: %v", i+1, err)
+				log.Printf("[media-cache] Skipping Plex item %d after cache failure: %v", i+1, err)
+				w.media.set(entry.URL, "failed", "Could not cache this Plex item", 0, 0)
 				continue
 			}
+			w.media.set(entry.URL, "cached", "Ready on Couch", 0, 0)
 			resolved = cachePath
 		}
-		duration := w.mediaDuration(ctx, resolved)
+		durationSource := resolved
+		if provider.Name() == "smb" && w.plexCache != nil {
+			sourceInfo, statErr := os.Stat(resolved)
+			if statErr != nil || !sourceInfo.Mode().IsRegular() {
+				w.media.set(entry.URL, "failed", "Trees file is unavailable", 0, 0)
+				log.Printf("[media-cache] Skipping unreadable SMB item %d", i+1)
+				continue
+			}
+			cachePath, hit := w.plexCache.cachedFilePath(entry.URL, resolved, sourceInfo.Size())
+			protectedCachePaths[cachePath] = true
+			protectedCachePaths[cachePath+".partial"] = true
+			if hit {
+				w.media.set(entry.URL, "cached", "Ready on Couch", 0, 0)
+				log.Printf("[media-cache] Using cached SMB item %d of %d", i+1, len(pl.Videos))
+				resolved = cachePath
+				durationSource = cachePath
+			} else if len(inputs) == 0 {
+				w.media.set(entry.URL, "caching", "Transferring from Trees", 0, sourceInfo.Size())
+				startCacheHold()
+				w.current.Store(entry.URL)
+				w.index.Store(int32(i))
+				w.phase.Store("downloading")
+				log.Printf("[media-cache] Caching first SMB item before playback")
+				if err := w.cacheSMBWithRetry(ctx, entry.URL, resolved, protectedCachePaths, true); err != nil {
+					if ctx.Err() != nil {
+						stopCacheHold()
+						return true, ctx.Err()
+					}
+					log.Printf("[media-cache] Skipping first SMB item after cache failure: %v", err)
+					w.media.set(entry.URL, "failed", "Could not transfer this Trees file", 0, sourceInfo.Size())
+					continue
+				}
+				resolved = cachePath
+				durationSource = cachePath
+			} else {
+				w.media.set(entry.URL, "waiting", "Waiting to transfer", 0, sourceInfo.Size())
+				pendingSMB = append(pendingSMB, smbCacheItem{
+					cacheKey: entry.URL, source: resolved, sourceSize: sourceInfo.Size(), index: i,
+				})
+				resolved = cachePath
+			}
+		}
+		duration := w.mediaDuration(ctx, durationSource)
 		log.Printf("[continuous] Prepared item %d (%0.3fs)", i+1, duration)
 		if duration <= 0 {
-			if provider.Name() == "plex" && w.plexCache != nil {
-				log.Printf("[plex-cache] Skipping unreadable cached item %d", i+1)
+			if (provider.Name() == "plex" || provider.Name() == "smb") && w.plexCache != nil {
+				w.media.set(entry.URL, "failed", "The cached file could not be read", 0, 0)
+				log.Printf("[media-cache] Skipping unreadable cached item %d", i+1)
 				continue
 			}
 			log.Printf("[continuous] Item %d is not readable; using per-item retry handling", i+1)
@@ -774,8 +843,43 @@ func (w *StreamWorker) streamContinuousPlaylist(ctx context.Context, pl *playlis
 	}
 	stopCacheHold()
 	if len(inputs) == 0 {
-		return true, fmt.Errorf("no playable local or cached Plex items")
+		return true, fmt.Errorf("no playable local or cached remote items")
 	}
+
+	prefetchCtx, cancelPrefetch := context.WithCancel(ctx)
+	prefetchDone := make(chan struct{})
+	if len(pendingSMB) > 0 {
+		go func() {
+			defer close(prefetchDone)
+			for _, item := range pendingSMB {
+				if prefetchCtx.Err() != nil {
+					return
+				}
+				if _, hit := w.plexCache.cachedFilePath(item.cacheKey, item.source, item.sourceSize); hit {
+					w.media.set(item.cacheKey, "cached", "Ready on Couch", 0, item.sourceSize)
+					continue
+				}
+				w.media.set(item.cacheKey, "caching", "Transferring from Trees", 0, item.sourceSize)
+				log.Printf("[media-cache] Prefetching SMB item %d of %d", item.index+1, len(pl.Videos))
+				if err := w.cacheSMBWithRetry(prefetchCtx, item.cacheKey, item.source, protectedCachePaths, false); err != nil && prefetchCtx.Err() == nil {
+					w.media.set(item.cacheKey, "failed", "Trees transfer failed", 0, item.sourceSize)
+					log.Printf("[media-cache] SMB prefetch failed for item %d: %v", item.index+1, err)
+				}
+			}
+			w.cacheBytes.Store(0)
+			w.cacheTotal.Store(0)
+		}()
+	} else {
+		close(prefetchDone)
+	}
+	defer func() {
+		cancelPrefetch()
+		select {
+		case <-prefetchDone:
+		case <-time.After(5 * time.Second):
+			log.Printf("[media-cache] SMB prefetch is still stopping")
+		}
+	}()
 
 	start := 0
 	for {
@@ -811,6 +915,34 @@ func (w *StreamWorker) streamContinuousPlaylist(ctx context.Context, pl *playlis
 			continue
 		}
 		return true, err
+	}
+}
+
+func (w *StreamWorker) cacheSMBWithRetry(ctx context.Context, cacheKey, source string, protected map[string]bool, foreground bool) error {
+	for {
+		_, err := w.plexCache.fetchFile(ctx, cacheKey, source, protected, func(received, total int64) {
+			w.cacheBytes.Store(received)
+			w.cacheTotal.Store(total)
+			w.media.set(cacheKey, "caching", "Transferring from Trees", received, total)
+		})
+		if err == nil {
+			w.media.set(cacheKey, "cached", "Ready on Couch", 0, 0)
+			if foreground {
+				log.Printf("[media-cache] SMB item cached locally")
+			} else {
+				log.Printf("[media-cache] SMB prefetch complete")
+			}
+			return nil
+		}
+		if !isTemporaryPlexCacheError(err) || ctx.Err() != nil {
+			return err
+		}
+		log.Printf("[media-cache] SMB copy interrupted; resuming in 5 seconds: %v", err)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(5 * time.Second):
+		}
 	}
 }
 

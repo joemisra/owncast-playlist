@@ -43,6 +43,14 @@
       <button id="btn-pl-rename" class="quiet-button" title="Rename playlist">Rename</button>
       <button id="btn-pl-delete" class="danger-quiet" title="Delete playlist">Delete</button>
     </div>
+    <div id="activity-panel" class="activity-panel" aria-live="polite">
+      <div class="activity-heading">
+        <span><span id="activity-indicator" class="activity-dot ok"></span><strong id="activity-title">Checking stream activity…</strong></span>
+        <button id="btn-view-logs" class="quiet-button" type="button">View logs</button>
+      </div>
+      <p id="activity-summary">Connecting to the streamer…</p>
+      <ul id="activity-list" class="hidden"></ul>
+    </div>
     <p class="playlist-help"><span id="playlist-mode"></span><span class="desktop-help"> · Drag to reorder · Enter plays · Delete removes · Ctrl/⌘ + ↑/↓ moves</span></p>
     <ol id="playlist" aria-label="Playlist queue"><li class="empty-state">Loading playlist…</li></ol>
     <div id="pl-actions">
@@ -55,6 +63,7 @@
           <option value="http">HTTP</option>
           <option value="realdebrid">Real-Debrid</option>
           <option value="plex">Plex</option>
+          <option value="smb">SMB</option>
           <option value="kick">Kick</option>
           <option value="twitch">Twitch</option>
         </select>
@@ -70,10 +79,27 @@
   <aside>
     <div class="tabs">
       <button class="tab active" data-tab="files-panel">📁 Files</button>
+      <button class="tab" data-tab="smb-panel">Trees</button>
       <button class="tab" data-tab="plex-panel">Plex</button>
       <button class="tab" data-tab="schedule-panel">📅 Schedule</button>
       <button class="tab" data-tab="config-panel">⚙ Config</button>
       <button class="tab" data-tab="logs-panel">Logs</button>
+    </div>
+
+    <div id="smb-panel" class="tab-panel">
+      <section id="smb-section">
+        <h2>Trees Media</h2>
+        <div class="smb-controls">
+          <select id="smb-share"><option value="">Choose Movies or TV…</option></select>
+          <button id="btn-smb-refresh">Refresh</button>
+        </div>
+        <div class="smb-path-row">
+          <button id="btn-smb-up" class="quiet-button" disabled>↑ Up</button>
+          <span id="smb-path">/</span>
+        </div>
+        <input id="smb-filter" type="search" placeholder="Filter this folder…" autocomplete="off">
+        <ul id="smb-list"><li class="empty">Choose a share to browse media on trees</li></ul>
+      </section>
     </div>
 
     <div id="plex-panel" class="tab-panel">
@@ -139,8 +165,8 @@
           <label>Subtitle language <input id="cfg-subtitle-lang" type="text" maxlength="16"></label>
           <label>Maximum retries <input id="cfg-max-retries" type="number" min="1" max="20"></label>
           <label>Delay between videos (seconds) <input id="cfg-delay" type="number" min="0" max="3600"></label>
-          <label><input id="cfg-plex-cache" type="checkbox"> Cache Plex files before playback</label>
-          <label>Plex cache limit (GB) <input id="cfg-plex-cache-max" type="number" min="1" max="1000"></label>
+          <label><input id="cfg-plex-cache" type="checkbox"> Cache remote files before playback</label>
+          <label>Remote cache limit (GB) <input id="cfg-plex-cache-max" type="number" min="1" max="1000"></label>
           <label>Disk space to keep free (GB) <input id="cfg-plex-cache-reserve" type="number" min="1" max="1000"></label>
           <h3>YouTube authentication</h3>
           <p id="youtube-cookie-status" class="hint"></p>
@@ -157,8 +183,9 @@
 
     <div id="logs-panel" class="tab-panel">
       <section id="logs-section">
-        <h2>Recent logs <button id="btn-logs-refresh">Refresh</button></h2>
-        <pre id="log-output">Press Refresh to view logs.</pre>
+        <h2>Recent logs <button id="btn-logs-refresh">Refresh now</button></h2>
+        <p class="logs-hint">Updates automatically while this page is open.</p>
+        <pre id="log-output">Connecting to the streamer…</pre>
       </section>
     </div>
   </aside>

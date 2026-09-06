@@ -121,6 +121,41 @@ func TestPlexCacheErrorDoesNotExposeToken(t *testing.T) {
 	}
 }
 
+func TestMediaCacheCopiesAndResumesSMBFile(t *testing.T) {
+	payload := bytes.Repeat([]byte("smb-media-"), 30_000)
+	source := filepath.Join(t.TempDir(), "Episode 01.mkv")
+	if err := os.WriteFile(source, payload, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cache := testPlexCache(t, http.DefaultClient)
+	finalPath := cache.path("smb://tv/Show/Episode%2001.mkv", source)
+	const offset = 80_000
+	if err := os.WriteFile(finalPath+".partial", payload[:offset], 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	var received, total int64
+	path, err := cache.fetchFile(context.Background(), "smb://tv/Show/Episode%2001.mkv", source, map[string]bool{}, func(current, size int64) {
+		received, total = current, size
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(got, payload) {
+		t.Fatalf("cached SMB payload mismatch: bytes=%d err=%v", len(got), err)
+	}
+	if received != int64(len(payload)) || total != int64(len(payload)) {
+		t.Fatalf("progress=%d/%d, want %d/%d", received, total, len(payload), len(payload))
+	}
+	if _, err := os.Stat(finalPath + ".partial"); !os.IsNotExist(err) {
+		t.Fatalf("partial cache file remains: %v", err)
+	}
+	if _, err := cache.fetchFile(context.Background(), "smb://tv/Show/Episode%2001.mkv", source, map[string]bool{}, nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func testPlexCache(t *testing.T, client *http.Client) *plexCache {
 	t.Helper()
 	return &plexCache{

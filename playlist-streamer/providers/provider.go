@@ -65,6 +65,9 @@ func InferProviderFromURL(rawURL string) string {
 	if strings.HasPrefix(u, "plex://") {
 		return "plex"
 	}
+	if strings.HasPrefix(u, "smb://") {
+		return "smb"
+	}
 	// Local file paths: starts with / or ./
 	if strings.HasPrefix(u, "/") || strings.HasPrefix(u, "./") {
 		return "local"

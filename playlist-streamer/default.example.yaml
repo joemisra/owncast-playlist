@@ -7,6 +7,15 @@
 #       base_url: "http://192.168.1.20:32400"
 #       token: "your-X-Plex-Token"
 
+# SMB credentials and mounts are managed by the operating system. These names
+# become safe playlist URLs such as smb://movies/Film/Film.mkv.
+# smb:
+#   shares:
+#     - name: movies
+#       path: "/mnt/media/movies"
+#     - name: tv
+#       path: "/mnt/media/tv"
+
 # Required to unlock the public dashboard's Config tab. Generate with:
 # openssl rand -hex 24
 # dashboard:

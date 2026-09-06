@@ -1,6 +1,6 @@
 # Playlist Streamer
 
-Streams YouTube, Plex, local, HTTP, and Real-Debrid media to Owncast via RTMP. Supports playlists, optional cron scheduling, looping, and a web dashboard for managing playback.
+Streams YouTube, SMB, Plex, local, HTTP, and Real-Debrid media to Owncast via RTMP. Supports playlists, optional cron scheduling, looping, and a web dashboard for managing playback.
 
 ## Prerequisites
 
@@ -105,6 +105,32 @@ The dashboard can still list cached Plex metadata when the underlying library
 storage is unavailable, so successful browsing alone does not guarantee that a
 title can be streamed.
 
+### SMB media libraries
+
+The Couch defaults use the existing read-only mounts at
+`/mnt/owncast-media/movies` and `/mnt/owncast-media/tv`. For another server or
+different mount points, give each mount a short name in `config.local.yaml`:
+
+```yaml
+smb:
+  shares:
+    - name: movies
+      path: "/mnt/owncast-media/movies"
+    - name: tv
+      path: "/mnt/owncast-media/tv"
+```
+
+SMB credentials remain in the operating system's protected mount configuration;
+they are never exposed to playlist-streamer or stored in playlists. The Trees
+tab browses one directory at a time and adds logical URLs such as
+`smb://tv/Show/Season%2001/Episode%2001.mkv`.
+
+With remote caching enabled, the first SMB item is copied to local disk before
+playback. Later items are prefetched in playlist order while the current item is
+streaming. Partial copies resume after a connection interruption. This avoids
+streaming directly from an SMB mount while also avoiding a manual upload of the
+entire playlist before it starts.
+
 ### Reverse proxy path
 
 When the dashboard is mounted beneath a reverse-proxy path, pass that mount in
@@ -148,6 +174,7 @@ playlists:
 ## Provider Stubs
 
 - **YouTube**: Implemented via yt-dlp.
+- **SMB**: Implemented through read-only operating-system mounts and local cache prefetch.
 - **Kick / Twitch**: Stub implementations return `ErrNotImplemented`. Add real support later using each platform's VOD API.
 
 ## Stream Key Security

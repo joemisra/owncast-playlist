@@ -34,8 +34,9 @@ func isTemporaryPlexCacheError(err error) bool {
 	return errors.As(err, &temporary)
 }
 
-// plexCache stores complete Plex media files under opaque names. Direct Plex
-// URLs (and their credentials) are never used as filenames or log labels.
+// plexCache is retained as the internal name for the remote-media cache. It
+// stores both Plex downloads and files copied from mounted SMB shares under
+// opaque names. Source URLs are never used as filenames or log labels.
 type plexCache struct {
 	dir          string
 	maxBytes     int64
@@ -58,6 +59,17 @@ func (c *plexCache) cachedPath(cacheKey, sourceURL string) (string, bool) {
 	path := c.path(cacheKey, sourceURL)
 	info, err := os.Stat(path)
 	if err != nil || !info.Mode().IsRegular() || info.Size() < minimumCachedMediaSize {
+		return path, false
+	}
+	now := time.Now()
+	_ = os.Chtimes(path, now, now)
+	return path, true
+}
+
+func (c *plexCache) cachedFilePath(cacheKey, sourcePath string, sourceSize int64) (string, bool) {
+	path := c.path(cacheKey, sourcePath)
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Size() != sourceSize || info.Size() < minimumCachedMediaSize {
 		return path, false
 	}
 	now := time.Now()
@@ -180,6 +192,126 @@ func (c *plexCache) fetch(ctx context.Context, cacheKey, sourceURL string, prote
 	return finalPath, nil
 }
 
+// fetchFile copies one file from a mounted remote share into the local cache.
+// Partial files are retained and resumed, so a brief SMB interruption does not
+// throw away bytes that already crossed the network.
+func (c *plexCache) fetchFile(ctx context.Context, cacheKey, sourcePath string, protected map[string]bool, progress func(received, total int64)) (string, error) {
+	if err := os.MkdirAll(c.dir, 0o750); err != nil {
+		return "", fmt.Errorf("create media cache: %w", err)
+	}
+	sourceInfo, err := os.Stat(sourcePath)
+	if err != nil {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		if os.IsNotExist(err) || os.IsPermission(err) {
+			return "", fmt.Errorf("SMB source is unavailable")
+		}
+		return "", temporaryPlexCacheError{err: fmt.Errorf("inspect SMB source: %w", err)}
+	}
+	if !sourceInfo.Mode().IsRegular() || sourceInfo.Size() < minimumCachedMediaSize {
+		return "", fmt.Errorf("SMB source is not a usable media file")
+	}
+	totalSize := sourceInfo.Size()
+	finalPath, hit := c.cachedFilePath(cacheKey, sourcePath, totalSize)
+	protected[finalPath] = true
+	if hit {
+		return finalPath, nil
+	}
+	if info, err := os.Stat(finalPath); err == nil && info.Mode().IsRegular() {
+		if err := os.Remove(finalPath); err != nil {
+			return "", fmt.Errorf("replace stale media cache entry: %w", err)
+		}
+	}
+
+	partialPath := finalPath + ".partial"
+	protected[partialPath] = true
+	offset := int64(0)
+	if info, err := os.Stat(partialPath); err == nil && info.Mode().IsRegular() {
+		offset = info.Size()
+	}
+	if offset > totalSize {
+		offset = 0
+	}
+	if offset == totalSize {
+		if err := os.Rename(partialPath, finalPath); err != nil {
+			return "", fmt.Errorf("complete media cache file: %w", err)
+		}
+		return finalPath, nil
+	}
+	if err := c.ensureCapacity(totalSize-offset, protected); err != nil {
+		return "", err
+	}
+	if progress != nil {
+		progress(offset, totalSize)
+	}
+
+	source, err := os.Open(sourcePath)
+	if err != nil {
+		if os.IsNotExist(err) || os.IsPermission(err) {
+			return "", fmt.Errorf("open SMB source: %w", err)
+		}
+		return "", temporaryPlexCacheError{err: fmt.Errorf("open SMB source: %w", err)}
+	}
+	defer source.Close()
+	if offset > 0 {
+		if _, err := source.Seek(offset, io.SeekStart); err != nil {
+			return "", temporaryPlexCacheError{err: fmt.Errorf("resume SMB source: %w", err)}
+		}
+	}
+
+	flags := os.O_CREATE | os.O_WRONLY
+	if offset == 0 {
+		flags |= os.O_TRUNC
+	} else {
+		flags |= os.O_APPEND
+	}
+	destinationFile, err := os.OpenFile(partialPath, flags, 0o640)
+	if err != nil {
+		return "", fmt.Errorf("open media cache partial file: %w", err)
+	}
+	destination := io.Writer(destinationFile)
+	if progress != nil {
+		destination = &cacheProgressWriter{writer: destinationFile, current: offset, total: totalSize, progress: progress}
+	}
+	written, copyErr := io.CopyBuffer(destination, &contextReader{ctx: ctx, reader: source}, make([]byte, 4*1024*1024))
+	syncErr := destinationFile.Sync()
+	closeErr := destinationFile.Close()
+	if copyErr != nil {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		return "", temporaryPlexCacheError{err: fmt.Errorf("copy SMB media: %w", copyErr)}
+	}
+	if syncErr != nil {
+		return "", fmt.Errorf("sync media cache: %w", syncErr)
+	}
+	if closeErr != nil {
+		return "", fmt.Errorf("close media cache: %w", closeErr)
+	}
+	if offset+written != totalSize {
+		return "", temporaryPlexCacheError{err: fmt.Errorf("SMB copy incomplete: received %d of %d bytes", offset+written, totalSize)}
+	}
+	if err := os.Rename(partialPath, finalPath); err != nil {
+		return "", fmt.Errorf("complete media cache file: %w", err)
+	}
+	return finalPath, nil
+}
+
+type contextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r *contextReader) Read(data []byte) (int, error) {
+	select {
+	case <-r.ctx.Done():
+		return 0, r.ctx.Err()
+	default:
+		return r.reader.Read(data)
+	}
+}
+
 type cacheProgressWriter struct {
 	writer   io.Writer
 	current  int64
@@ -248,7 +380,7 @@ func (c *plexCache) ensureCapacity(incoming int64, protected map[string]bool) er
 	}
 	free, err := diskFreeBytes(c.dir)
 	if err != nil {
-		return fmt.Errorf("inspect Plex cache disk: %w", err)
+		return fmt.Errorf("inspect remote media cache disk: %w", err)
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].modTime.Before(entries[j].modTime) })
 	needsSpace := func() bool {
@@ -264,16 +396,16 @@ func (c *plexCache) ensureCapacity(incoming int64, protected map[string]bool) er
 			continue
 		}
 		if err := os.Remove(entry.path); err != nil {
-			return fmt.Errorf("evict Plex cache entry: %w", err)
+			return fmt.Errorf("evict remote media cache entry: %w", err)
 		}
 		used -= entry.size
 		free += entry.size
 	}
 	if c.maxBytes > 0 && used+incoming > c.maxBytes {
-		return fmt.Errorf("Plex playlist exceeds the %d GB cache limit", c.maxBytes/(1024*1024*1024))
+		return fmt.Errorf("remote playlist exceeds the %d GB cache limit", c.maxBytes/(1024*1024*1024))
 	}
 	if c.minFreeBytes > 0 && free < incoming+c.minFreeBytes {
-		return fmt.Errorf("Plex cache would leave less than %d GB free", c.minFreeBytes/(1024*1024*1024))
+		return fmt.Errorf("remote media cache would leave less than %d GB free", c.minFreeBytes/(1024*1024*1024))
 	}
 	return nil
 }
@@ -281,7 +413,7 @@ func (c *plexCache) ensureCapacity(incoming int64, protected map[string]bool) er
 func (c *plexCache) entries() ([]cacheEntry, int64, error) {
 	dirEntries, err := os.ReadDir(c.dir)
 	if err != nil {
-		return nil, 0, fmt.Errorf("read Plex cache: %w", err)
+		return nil, 0, fmt.Errorf("read remote media cache: %w", err)
 	}
 	entries := make([]cacheEntry, 0, len(dirEntries))
 	var used int64

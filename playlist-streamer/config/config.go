@@ -13,6 +13,7 @@ type Config struct {
 	Owncast   OwncastConfig   `yaml:"owncast"`
 	Streamer  StreamerConfig  `yaml:"streamer"`
 	Plex      PlexConfig      `yaml:"plex"`
+	SMB       SMBConfig       `yaml:"smb"`
 	Dashboard DashboardConfig `yaml:"dashboard"`
 	Playlists string          `yaml:"playlists"` // path to playlists directory or file
 }
@@ -29,6 +30,17 @@ type PlexServerConfig struct {
 	Name    string `yaml:"name"`
 	BaseURL string `yaml:"base_url"`
 	Token   string `yaml:"token"`
+}
+
+// SMBConfig exposes read-only media mounts to the playlist browser. Mounting
+// and credentials are managed by the operating system, outside this service.
+type SMBConfig struct {
+	Shares []SMBShareConfig `yaml:"shares"`
+}
+
+type SMBShareConfig struct {
+	Name string `yaml:"name"`
+	Path string `yaml:"path"`
 }
 
 // OwncastConfig holds Owncast RTMP connection details.
@@ -59,8 +71,8 @@ type StreamerConfig struct {
 	RealDebridToken    string `yaml:"realdebrid_token"`       // Real-Debrid API token from https://real-debrid.com/apitoken
 	Subtitles          bool   `yaml:"subtitles"`              // start with subtitles burned into video
 	SubtitleLang       string `yaml:"subtitle_lang"`          // subtitle language for yt-dlp downloads (default: "en")
-	PlexCacheEnabled   bool   `yaml:"plex_cache_enabled"`     // download Plex media before playback
-	PlexCacheDir       string `yaml:"plex_cache_dir"`         // persistent Plex media cache
+	PlexCacheEnabled   bool   `yaml:"plex_cache_enabled"`     // cache Plex and SMB media before playback
+	PlexCacheDir       string `yaml:"plex_cache_dir"`         // persistent remote-media cache
 	PlexCacheMaxGB     int64  `yaml:"plex_cache_max_gb"`      // soft cache size limit (default 20 GB)
 	PlexCacheMinFreeGB int64  `yaml:"plex_cache_min_free_gb"` // minimum free disk space to preserve (default 10 GB)
 }
@@ -94,6 +106,12 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Streamer.TempDir == "" {
 		c.Streamer.TempDir = "data/tmp"
+	}
+	if len(c.SMB.Shares) == 0 {
+		c.SMB.Shares = []SMBShareConfig{
+			{Name: "Movies", Path: "/mnt/owncast-media/movies"},
+			{Name: "TV", Path: "/mnt/owncast-media/tv"},
+		}
 	}
 	if c.Streamer.PlexCacheDir == "" {
 		c.Streamer.PlexCacheDir = filepath.Join(c.Streamer.TempDir, "plex-cache")

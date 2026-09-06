@@ -54,6 +54,14 @@ const el = {
   plexLibrary: $('#plex-library'),
   plexFilter: $('#plex-filter'),
   plexList: $('#plex-list'),
+  smbShare: $('#smb-share'),
+  smbFilter: $('#smb-filter'),
+  smbList: $('#smb-list'),
+  activityPanel: $('#activity-panel'),
+  activityIndicator: $('#activity-indicator'),
+  activityTitle: $('#activity-title'),
+  activitySummary: $('#activity-summary'),
+  activityList: $('#activity-list'),
   configForm: $('#config-form'),
   configLoading: $('#config-loading'),
   configPlexServers: $('#config-plex-servers'),
@@ -70,7 +78,9 @@ window.addEventListener('DOMContentLoaded', () => {
 
   // Poll status + playlist
   refresh();
-  setInterval(refresh, 5000);
+  setInterval(refresh, 2500);
+  fetchOperationalFeedback();
+  setInterval(fetchOperationalFeedback, 3000);
 
   // Buttons
   $('#btn-play').addEventListener('click', () => API.post('/api/control/play').catch(toast));
@@ -136,11 +146,16 @@ window.addEventListener('DOMContentLoaded', () => {
   $('#btn-plex-refresh').addEventListener('click', fetchPlexLibraries);
   el.plexLibrary.addEventListener('change', fetchPlexItems);
   el.plexFilter.addEventListener('input', renderPlexItems);
+  $('#btn-smb-refresh').addEventListener('click', () => fetchSMBItems(smbPath));
+  $('#btn-smb-up').addEventListener('click', browseSMBUp);
+  el.smbShare.addEventListener('change', () => { smbPath = ''; fetchSMBItems(''); });
+  el.smbFilter.addEventListener('input', renderSMBItems);
   $('#btn-config-add-plex').addEventListener('click', () => addPlexServerRow());
   el.configForm.addEventListener('submit', saveConfig);
   $('#btn-youtube-cookies').addEventListener('click', uploadYouTubeCookies);
   $('#btn-owncast-title').addEventListener('click', updateOwncastTitle);
-  $('#btn-logs-refresh').addEventListener('click', fetchLogs);
+  $('#btn-logs-refresh').addEventListener('click', () => fetchOperationalFeedback(true));
+  $('#btn-view-logs').addEventListener('click', () => document.querySelector('.tab[data-tab="logs-panel"]')?.click());
   $('#btn-logout').addEventListener('click', logout);
   window.addEventListener('beforeunload', (event) => {
     if (!playlistDirty) return;
@@ -156,6 +171,7 @@ let playlistDirty = false;
 let playlistFile = '';
 let draggedIndex = -1;
 let playlistRequestInFlight = false;
+let latestStatus = null;
 
 async function refresh() {
   if (playlistRequestInFlight || draggedIndex >= 0) return;
@@ -185,6 +201,7 @@ async function refresh() {
 }
 
 function renderStatus(s) {
+  latestStatus = s;
   el.plCount.textContent = s.totalVideos;
 
   if (!s.playing) {
@@ -223,27 +240,62 @@ function renderStatus(s) {
       ? `— #${s.currentIndex + 1}/${s.totalVideos} — ${trimUrl(s.currentUrl)}`
       : '';
   }
+  renderActivity(lastLogLines);
 }
 
 function renderPlaylist(p) {
   const videos = Array.isArray(p.videos) ? p.videos : [];
+  const statuses = p.itemStatuses || {};
   const focusedIndex = el.playlist.querySelector('li:focus')?.dataset.index;
   const currentIdx = p.currentIndex;
   el.playlist.innerHTML = videos.length ? videos.map((v, i) => {
     const cls = p.file === p.activeFile && i === currentIdx ? 'now' : '';
     const display = v.title || trimUrl(v.url || '');
     const fullUrl = esc(v.url || '(empty)');
+    const status = mediaStatusFor(v, statuses[v.url]);
     return `<li class="${cls}" draggable="true" tabindex="0" data-index="${i}" aria-label="Queue item ${i + 1}: ${escAttr(display)}">
       <span class="pl-grip" title="Drag to reorder">⠿</span>
       <span class="pl-idx">${i + 1}</span>
       <span class="pl-provider">${v.provider || '?'}</span>
-      <span class="pl-url" title="${fullUrl}">${esc(display || '(empty)')}</span>
+      <span class="pl-main">
+        <span class="pl-url" title="${fullUrl}">${esc(display || '(empty)')}</span>
+        <span class="pl-item-detail">${esc(status.detail)}</span>
+        ${status.progress}
+      </span>
+      <span class="pl-state pl-state-${status.state}" title="${escAttr(status.detail)}">${esc(status.label)}</span>
       <button class="pl-play" data-index="${i}" title="Play now" aria-label="Play ${escAttr(display)} now">▶</button>
       <button class="pl-del" data-index="${i}" title="Remove" aria-label="Remove ${escAttr(display)}">✕</button>
     </li>`;
-  }).join('') : '<li class="empty-state">This playlist is empty. Add a URL, upload a file, or browse Plex to get started.</li>';
+  }).join('') : '<li class="empty-state">This playlist is empty. Add a URL, upload a file, or browse Trees/Plex to get started.</li>';
 
   if (focusedIndex !== undefined) el.playlist.querySelector(`[data-index="${focusedIndex}"]`)?.focus({ preventScroll: true });
+}
+
+function mediaStatusFor(video, current) {
+  const provider = (video.provider || '').toLowerCase();
+  const fallback = provider === 'local'
+    ? { state: 'ready', detail: 'Stored on Couch' }
+    : (provider === 'smb' || provider === 'plex')
+      ? { state: 'waiting', detail: 'Not cached yet' }
+      : { state: 'direct', detail: 'Streams directly' };
+  const status = current || fallback;
+  const state = ['cached', 'ready', 'caching', 'waiting', 'failed', 'direct'].includes(status.state) ? status.state : 'waiting';
+  let label = { cached: 'Cached', ready: 'On Couch', waiting: 'Not cached', failed: 'Problem', direct: 'Direct' }[state] || 'Preparing';
+  let detail = status.detail || fallback.detail;
+  let progress = '';
+  if (state === 'caching') {
+    const bytes = Number(status.bytes) || 0;
+    const total = Number(status.totalBytes) || 0;
+    if (total > 0) {
+      const percent = Math.max(0, Math.min(100, Math.floor((bytes / total) * 100)));
+      label = `${percent}% cached`;
+      detail = `${detail} · ${formatBytes(bytes)} of ${formatBytes(total)}`;
+      progress = `<span class="pl-progress" aria-hidden="true"><span style="width:${percent}%"></span></span>`;
+    } else {
+      label = 'Caching';
+    }
+  }
+  return { state, label, detail, progress };
 }
 
 async function fetchPlaylists() {
@@ -543,6 +595,69 @@ function errorText(err) {
   try { return JSON.parse(err.message).error || err.message; } catch { return err.message; }
 }
 
+// ── SMB library on trees ───────────────────────────────────────
+
+let smbItems = [];
+let smbPath = '';
+let smbLoaded = false;
+
+async function fetchSMBShares() {
+  try {
+    const shares = await API.get('/api/smb/shares');
+    const previous = el.smbShare.value;
+    el.smbShare.innerHTML = '<option value="">Choose Movies or TV…</option>' + shares.map(share =>
+      `<option value="${escAttr(share.name)}" ${share.available ? '' : 'disabled'}>${esc(share.name)}${share.available ? '' : ' (offline)'}</option>`
+    ).join('');
+    if (shares.some(share => share.name === previous && share.available)) el.smbShare.value = previous;
+    smbLoaded = true;
+    if (!shares.length) el.smbList.innerHTML = '<li class="empty">No SMB shares configured</li>';
+  } catch (err) {
+    el.smbList.innerHTML = `<li class="empty">${esc(errorText(err))}</li>`;
+  }
+}
+
+async function fetchSMBItems(nextPath) {
+  const share = el.smbShare.value;
+  if (!share) {
+    smbItems = [];
+    smbPath = '';
+    renderSMBItems();
+    return;
+  }
+  el.smbList.innerHTML = '<li class="empty">Loading folder…</li>';
+  try {
+    smbItems = await API.get(`/api/smb/items?share=${encodeURIComponent(share)}&path=${encodeURIComponent(nextPath || '')}`);
+    smbPath = nextPath || '';
+    el.smbFilter.value = '';
+    renderSMBItems();
+  } catch (err) {
+    el.smbList.innerHTML = `<li class="empty">${esc(errorText(err))}</li>`;
+  }
+}
+
+function renderSMBItems() {
+  const filter = el.smbFilter.value.trim().toLowerCase();
+  const items = smbItems.filter(item => !filter || item.name.toLowerCase().includes(filter));
+  el.smbPath.textContent = '/' + smbPath;
+  $('#btn-smb-up').disabled = !smbPath;
+  el.smbList.innerHTML = items.length ? items.map(item => item.directory
+    ? `<li class="smb-folder"><button class="smb-open" data-path="${escAttr(item.path)}"><span>📁</span><span>${esc(item.name)}</span></button></li>`
+    : `<li class="smb-file"><span class="smb-file-icon">▤</span><span class="vname" title="${escAttr(item.name)}">${esc(item.name)}</span><span class="vsize">${formatBytes(item.size)}</span><button class="vadd smb-add" data-url="${escAttr(item.url)}" data-title="${escAttr(item.name)}" title="Add to playlist">+</button></li>`
+  ).join('') : '<li class="empty">No matching folders or media files</li>';
+  el.smbList.querySelectorAll('.smb-open').forEach(button => button.addEventListener('click', () => fetchSMBItems(button.dataset.path)));
+  el.smbList.querySelectorAll('.smb-add').forEach(button => button.addEventListener('click', () => {
+    API.post('/api/playlist/video', { url: button.dataset.url, provider: 'smb', title: button.dataset.title })
+      .then(() => { setPlaylistDirty(true); toast('success', 'Added from trees'); refresh(); })
+      .catch(err => toast('error', errorText(err)));
+  }));
+}
+
+function browseSMBUp() {
+  const parts = smbPath.split('/').filter(Boolean);
+  parts.pop();
+  fetchSMBItems(parts.join('/'));
+}
+
 function setPlaylistDirty(value) {
   playlistDirty = value;
   el.dirtyIndicator.classList.toggle('hidden', !value);
@@ -567,14 +682,85 @@ async function configRequest(method, body) {
   return response.json();
 }
 
-async function fetchLogs() {
+let logPollInFlight = false;
+let lastLogLines = [];
+
+async function fetchOperationalFeedback(showErrorToast = false) {
+  if (logPollInFlight) return;
+  logPollInFlight = true;
   try {
     const response = await fetch(apiPath('/api/logs?limit=300'));
     if (!response.ok) throw new Error((await response.json()).error || response.statusText);
     const data = await response.json();
-    $('#log-output').textContent = (data.lines || []).join('\n') || 'No logs captured yet.';
-    $('#log-output').scrollTop = $('#log-output').scrollHeight;
-  } catch (err) { toast('error', errorText(err)); }
+    lastLogLines = data.lines || [];
+    const output = $('#log-output');
+    const nearBottom = output.scrollHeight - output.scrollTop - output.clientHeight < 80;
+    output.textContent = lastLogLines.join('\n') || 'No logs captured yet.';
+    if (nearBottom) output.scrollTop = output.scrollHeight;
+    renderActivity(lastLogLines);
+  } catch (err) {
+    el.activityPanel.classList.add('has-error');
+    el.activityIndicator.className = 'activity-dot error';
+    el.activityTitle.textContent = 'Monitoring unavailable';
+    el.activitySummary.textContent = 'The dashboard could not retrieve recent streamer activity.';
+    if (showErrorToast) toast('error', errorText(err));
+  } finally {
+    logPollInFlight = false;
+  }
+}
+
+function renderActivity(lines) {
+  if (!el.activityPanel) return;
+  const issues = [];
+  const seen = new Set();
+  for (let i = lines.length - 1; i >= 0 && issues.length < 4; i--) {
+    const message = cleanLogLine(lines[i]);
+    if (!isProblemLog(message) || seen.has(message)) continue;
+    seen.add(message);
+    issues.push({ message, severity: /(?:failed|failure|error|no playable|rejected)/i.test(message) ? 'error' : 'warning' });
+  }
+
+  const busy = latestStatus && ['downloading', 'resolving', 'retrying', 'starting'].includes(latestStatus.phase);
+  el.activityPanel.classList.toggle('has-error', issues.length > 0);
+  el.activityPanel.classList.toggle('is-busy', !issues.length && busy);
+  if (issues.length) {
+    el.activityIndicator.className = 'activity-dot error';
+    el.activityTitle.textContent = issues.length === 1 ? '1 item needs attention' : `${issues.length} items need attention`;
+    el.activitySummary.textContent = 'Recent problems stay here and the detailed log updates automatically.';
+  } else if (busy) {
+    el.activityIndicator.className = 'activity-dot busy';
+    el.activityTitle.textContent = latestStatus.phase === 'downloading' ? 'Preparing media' : 'Streamer is working';
+    el.activitySummary.textContent = activityProgressText(latestStatus);
+  } else if (latestStatus?.playing) {
+    el.activityIndicator.className = 'activity-dot ok';
+    el.activityTitle.textContent = 'Stream activity looks normal';
+    el.activitySummary.textContent = latestStatus.currentUrl ? `Playing ${trimUrl(latestStatus.currentUrl)}` : 'The stream is running.';
+  } else {
+    el.activityIndicator.className = 'activity-dot';
+    el.activityTitle.textContent = 'Stream is not running';
+    el.activitySummary.textContent = 'Start playback when the queue is ready.';
+  }
+
+  el.activityList.classList.toggle('hidden', issues.length === 0);
+  el.activityList.innerHTML = issues.map(issue => `<li class="${issue.severity}"><span class="activity-level">${issue.severity === 'error' ? '!' : '•'}</span><span class="activity-message">${esc(issue.message)}</span></li>`).join('');
+}
+
+function activityProgressText(status) {
+  if (status.phase !== 'downloading') return status.currentUrl ? trimUrl(status.currentUrl) : 'Preparing the next item.';
+  if (status.cacheTotalBytes > 0) {
+    const percent = Math.floor((status.cacheBytes / status.cacheTotalBytes) * 100);
+    return `${percent}% · ${formatBytes(status.cacheBytes)} of ${formatBytes(status.cacheTotalBytes)}${status.currentUrl ? ` · ${trimUrl(status.currentUrl)}` : ''}`;
+  }
+  return status.currentUrl ? `Preparing ${trimUrl(status.currentUrl)}` : 'Preparing media for playback.';
+}
+
+function cleanLogLine(line) {
+  return String(line || '').replace(/^\d{4}\/\d{2}\/\d{2}\s+\d{2}:\d{2}:\d{2}\s*/, '').trim();
+}
+
+function isProblemLog(line) {
+  if (/Attachment: none|Consider increasing the value for the 'analyzeduration'/i.test(line)) return false;
+  return /\b(?:failed|failure|error|unavailable|skipping|skipped|interrupted|rejected|unreadable|could not|timed out|no playable)\b/i.test(line);
 }
 
 let configLoaded = false;
@@ -725,6 +911,8 @@ document.addEventListener('DOMContentLoaded', () => {
       const panel = document.getElementById(tab.dataset.tab);
       if (panel) panel.classList.add('active');
       if (tab.dataset.tab === 'config-panel') loadConfig();
+      if (tab.dataset.tab === 'smb-panel' && !smbLoaded) fetchSMBShares();
+      if (tab.dataset.tab === 'logs-panel') fetchOperationalFeedback();
     });
   });
 });

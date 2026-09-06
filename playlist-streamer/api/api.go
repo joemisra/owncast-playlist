@@ -50,6 +50,7 @@ type Server struct {
 	stopContinuous      atomic.Bool
 	schedRunner         scheduleRunner
 	plex                *providers.Plex
+	smb                 *providers.SMB
 	restartCh           chan struct{}
 }
 
@@ -59,6 +60,10 @@ func New(cfg *config.Config, w *worker.StreamWorker, playlistDir, configPath, in
 	for _, server := range cfg.Plex.Servers {
 		plexServers = append(plexServers, providers.PlexServer{Name: server.Name, BaseURL: server.BaseURL, Token: server.Token})
 	}
+	smbShares := make([]providers.SMBShare, 0, len(cfg.SMB.Shares))
+	for _, share := range cfg.SMB.Shares {
+		smbShares = append(smbShares, providers.SMBShare{Name: share.Name, Path: share.Path})
+	}
 	s := &Server{
 		cfg:                 cfg,
 		worker:              w,
@@ -67,6 +72,7 @@ func New(cfg *config.Config, w *worker.StreamWorker, playlistDir, configPath, in
 		currentPlaylistFile: initialPlaylistFile,
 		mux:                 http.NewServeMux(),
 		plex:                providers.NewPlex(plexServers),
+		smb:                 providers.NewSMB(smbShares),
 		restartCh:           make(chan struct{}, 1),
 	}
 	if initialPlaylist != nil {
@@ -210,6 +216,8 @@ func (s *Server) register() {
 	s.mux.HandleFunc("/api/videos", s.handleListVideos)
 	s.mux.HandleFunc("/api/plex/libraries", s.handlePlexLibraries)
 	s.mux.HandleFunc("/api/plex/items", s.handlePlexItems)
+	s.mux.HandleFunc("/api/smb/shares", s.handleSMBShares)
+	s.mux.HandleFunc("/api/smb/items", s.handleSMBItems)
 	s.mux.HandleFunc("/api/config", s.requireConfigAuth(s.handleConfig))
 	s.mux.HandleFunc("/api/logs", s.requireConfigAuth(s.handleLogs))
 	s.mux.HandleFunc("/api/owncast/title", s.requireConfigAuth(s.handleOwncastTitle))
@@ -508,10 +516,10 @@ func (s *Server) applyConfigUpdate(body configUpdateBody) error {
 		return fmt.Errorf("delay must be between 0 and 3600 seconds")
 	}
 	if body.Streamer.PlexCacheEnabled && (body.Streamer.PlexCacheMaxGB < 1 || body.Streamer.PlexCacheMaxGB > 1000) {
-		return fmt.Errorf("Plex cache limit must be between 1 and 1000 GB")
+		return fmt.Errorf("remote cache limit must be between 1 and 1000 GB")
 	}
 	if body.Streamer.PlexCacheEnabled && (body.Streamer.PlexCacheMinFreeGB < 1 || body.Streamer.PlexCacheMinFreeGB > 1000) {
-		return fmt.Errorf("Plex cache disk reserve must be between 1 and 1000 GB")
+		return fmt.Errorf("remote cache disk reserve must be between 1 and 1000 GB")
 	}
 	s.cfg.Plex.Servers = servers
 	s.cfg.Streamer.LoopPlaylist = body.Streamer.LoopPlaylist
@@ -567,6 +575,39 @@ func (s *Server) handlePlexItems(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.writeError(w, http.StatusBadGateway, err.Error())
 		return
+	}
+	s.writeJSON(w, items)
+}
+
+func (s *Server) handleSMBShares(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		s.writeError(w, http.StatusMethodNotAllowed, "GET required")
+		return
+	}
+	shares := s.smb.ListShares()
+	if shares == nil {
+		shares = []providers.SMBShareInfo{}
+	}
+	s.writeJSON(w, shares)
+}
+
+func (s *Server) handleSMBItems(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		s.writeError(w, http.StatusMethodNotAllowed, "GET required")
+		return
+	}
+	share := strings.TrimSpace(r.URL.Query().Get("share"))
+	if share == "" {
+		s.writeError(w, http.StatusBadRequest, "share required")
+		return
+	}
+	items, err := s.smb.List(share, r.URL.Query().Get("path"))
+	if err != nil {
+		s.writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	if items == nil {
+		items = []providers.SMBItem{}
 	}
 	s.writeJSON(w, items)
 }
@@ -710,11 +751,12 @@ func (s *Server) handleSubs(w http.ResponseWriter, r *http.Request) {
 // ── Playlist ────────────────────────────────────────────────────────
 
 type playlistResp struct {
-	Name         string                `json:"name"`
-	Videos       []playlist.VideoEntry `json:"videos"`
-	CurrentIndex int                   `json:"currentIndex"`
-	File         string                `json:"file"`
-	ActiveFile   string                `json:"activeFile"`
+	Name         string                            `json:"name"`
+	Videos       []playlist.VideoEntry             `json:"videos"`
+	ItemStatuses map[string]worker.MediaItemStatus `json:"itemStatuses"`
+	CurrentIndex int                               `json:"currentIndex"`
+	File         string                            `json:"file"`
+	ActiveFile   string                            `json:"activeFile"`
 }
 
 func (s *Server) handlePlaylist(w http.ResponseWriter, r *http.Request) {
@@ -733,6 +775,7 @@ func (s *Server) handlePlaylist(w http.ResponseWriter, r *http.Request) {
 		s.writeJSON(w, playlistResp{
 			Name:         name,
 			Videos:       videos,
+			ItemStatuses: s.worker.MediaItemStatuses(),
 			CurrentIndex: curIdx,
 			File:         file,
 			ActiveFile:   s.getCurrentPlaylistFile(),
