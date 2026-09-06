@@ -59,6 +59,8 @@ type StreamWorker struct {
 	ffmpegMu     sync.Mutex
 	ffmpegCancel context.CancelFunc
 	ffmpegCmd    *exec.Cmd
+	runMu        sync.Mutex
+	runCancel    context.CancelFunc
 }
 
 // New creates a new stream worker.
@@ -118,6 +120,39 @@ func (w *StreamWorker) CacheProgress() (int64, int64) {
 }
 func (w *StreamWorker) MediaItemStatuses() map[string]MediaItemStatus {
 	return w.media.snapshot()
+}
+func (w *StreamWorker) CacheUploadStatus(cacheKey string) MediaItemStatus {
+	if w.plexCache == nil {
+		return MediaItemStatus{State: "failed", Detail: "Remote caching is disabled", UpdatedAt: time.Now()}
+	}
+	path, hit := w.plexCache.cachedPath(cacheKey, cacheKey)
+	if hit {
+		info, _ := os.Stat(path)
+		return MediaItemStatus{State: "cached", Detail: "Ready on Couch", Bytes: info.Size(), Total: info.Size(), UpdatedAt: info.ModTime()}
+	}
+	if info, err := os.Stat(path + ".incoming"); err == nil && info.Mode().IsRegular() {
+		return MediaItemStatus{State: "caching", Detail: "Uploading to Couch", Bytes: info.Size(), UpdatedAt: info.ModTime()}
+	}
+	if status, ok := w.media.snapshot()[cacheKey]; ok {
+		return status
+	}
+	return MediaItemStatus{State: "waiting", Detail: "Not cached yet", UpdatedAt: time.Now()}
+}
+
+func (w *StreamWorker) ReceiveCacheUpload(ctx context.Context, cacheKey string, source io.Reader, total int64) error {
+	if w.plexCache == nil {
+		return fmt.Errorf("remote caching is disabled")
+	}
+	w.media.set(cacheKey, "caching", "Uploading to Couch", 0, total)
+	_, err := w.plexCache.receive(ctx, cacheKey, source, total, func(received, total int64) {
+		w.media.set(cacheKey, "caching", "Uploading to Couch", received, total)
+	})
+	if err != nil {
+		w.media.set(cacheKey, "failed", "Upload to Couch failed", 0, total)
+		return err
+	}
+	w.media.set(cacheKey, "cached", "Ready on Couch", total, total)
+	return nil
 }
 func (w *StreamWorker) Phase() string {
 	if value := w.phase.Load(); value != nil {
@@ -251,6 +286,14 @@ func (w *StreamWorker) cancelFFmpeg() {
 	w.ffmpegMu.Unlock()
 }
 
+func (w *StreamWorker) cancelRun() {
+	w.runMu.Lock()
+	if w.runCancel != nil {
+		w.runCancel()
+	}
+	w.runMu.Unlock()
+}
+
 // processCommands runs in a goroutine for the lifetime of StreamPlaylist,
 // handling commands even while ffmpeg is actively streaming.
 func (w *StreamWorker) processCommands(ctx context.Context) {
@@ -269,6 +312,7 @@ func (w *StreamWorker) processCommands(ctx context.Context) {
 			case CmdStop:
 				w.stopped.Store(true)
 				w.paused.Store(false)
+				w.cancelRun()
 				w.cancelFFmpeg()
 			case CmdSkip:
 				w.skipped.Store(true)
@@ -297,6 +341,18 @@ func (w *StreamWorker) processCommands(ctx context.Context) {
 // StreamPlaylist streams all videos in the playlist to Owncast, using a blue holding pattern
 // whenever the RTMP path would otherwise be idle (gaps, retries, empty playlist, end of list).
 func (w *StreamWorker) StreamPlaylist(ctx context.Context, pl *playlist.Playlist) error {
+	runCtx, runCancel := context.WithCancel(ctx)
+	w.runMu.Lock()
+	w.runCancel = runCancel
+	w.runMu.Unlock()
+	defer func() {
+		runCancel()
+		w.runMu.Lock()
+		w.runCancel = nil
+		w.runMu.Unlock()
+	}()
+	ctx = runCtx
+
 	w.playlistMu.Lock()
 	w.playlist = pl
 	w.playlistMu.Unlock()
@@ -783,6 +839,21 @@ func (w *StreamWorker) streamContinuousPlaylist(ctx context.Context, pl *playlis
 		}
 		durationSource := resolved
 		if provider.Name() == "smb" && w.plexCache != nil {
+			// A Trees-side helper can push this logical SMB item to Couch over
+			// public HTTPS. Prefer that completed file without touching the
+			// Tailscale SMB mount; mounted SMB copying remains the fallback.
+			if cachePath, hit := w.plexCache.cachedPath(entry.URL, entry.URL); hit {
+				w.media.set(entry.URL, "cached", "Ready on Couch", 0, 0)
+				log.Printf("[media-cache] Using pushed Trees item %d of %d", i+1, len(pl.Videos))
+				duration := w.mediaDuration(ctx, cachePath)
+				if duration <= 0 {
+					w.media.set(entry.URL, "failed", "The cached file could not be read", 0, 0)
+					log.Printf("[media-cache] Skipping unreadable pushed item %d", i+1)
+					continue
+				}
+				inputs = append(inputs, concatInput{resolved: cachePath, original: entry.URL, duration: duration, index: i})
+				continue
+			}
 			sourceInfo, statErr := os.Stat(resolved)
 			if statErr != nil || !sourceInfo.Mode().IsRegular() {
 				w.media.set(entry.URL, "failed", "Trees file is unavailable", 0, 0)

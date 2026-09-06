@@ -218,6 +218,8 @@ func (s *Server) register() {
 	s.mux.HandleFunc("/api/plex/items", s.handlePlexItems)
 	s.mux.HandleFunc("/api/smb/shares", s.handleSMBShares)
 	s.mux.HandleFunc("/api/smb/items", s.handleSMBItems)
+	s.mux.HandleFunc("/api/cache/queue", s.requireTransferAuth(s.handleCacheQueue))
+	s.mux.HandleFunc("/api/cache/upload", s.requireTransferAuth(s.handleCacheUpload))
 	s.mux.HandleFunc("/api/config", s.requireConfigAuth(s.handleConfig))
 	s.mux.HandleFunc("/api/logs", s.requireConfigAuth(s.handleLogs))
 	s.mux.HandleFunc("/api/owncast/title", s.requireConfigAuth(s.handleOwncastTitle))
@@ -259,7 +261,7 @@ func (s *Server) validSession(r *http.Request) bool {
 
 func (s *Server) requireSession(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		public := r.URL.Path == "/login.html" || r.URL.Path == "/login.js" || r.URL.Path == "/reconnect.js" || r.URL.Path == "/api/status" || r.URL.Path == "/api/auth/login"
+		public := r.URL.Path == "/login.html" || r.URL.Path == "/login.js" || r.URL.Path == "/reconnect.js" || r.URL.Path == "/api/status" || r.URL.Path == "/api/auth/login" || strings.HasPrefix(r.URL.Path, "/api/cache/")
 		if public || s.validSession(r) {
 			next.ServeHTTP(w, r)
 			return
@@ -270,6 +272,27 @@ func (s *Server) requireSession(next http.Handler) http.Handler {
 		}
 		http.Redirect(w, r, prefixedPath(r, "/login.html"), http.StatusSeeOther)
 	})
+}
+
+func (s *Server) validTransferToken(r *http.Request) bool {
+	const prefix = "Bearer "
+	header := strings.TrimSpace(r.Header.Get("Authorization"))
+	if !strings.HasPrefix(header, prefix) {
+		return false
+	}
+	expected := []byte(s.cfg.Dashboard.AdminToken)
+	supplied := []byte(strings.TrimSpace(strings.TrimPrefix(header, prefix)))
+	return len(expected) > 0 && subtle.ConstantTimeCompare(expected, supplied) == 1
+}
+
+func (s *Server) requireTransferAuth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.validSession(r) && !s.validTransferToken(r) {
+			s.writeError(w, http.StatusUnauthorized, "login or transfer token required")
+			return
+		}
+		next(w, r)
+	}
 }
 
 // prefixedPath keeps redirects inside a reverse proxy mount such as /stream.
@@ -610,6 +633,106 @@ func (s *Server) handleSMBItems(w http.ResponseWriter, r *http.Request) {
 		items = []providers.SMBItem{}
 	}
 	s.writeJSON(w, items)
+}
+
+type cacheQueueItem struct {
+	URL      string                 `json:"url"`
+	Share    string                 `json:"share"`
+	Path     string                 `json:"path"`
+	Title    string                 `json:"title,omitempty"`
+	Position int                    `json:"position"`
+	Status   worker.MediaItemStatus `json:"status"`
+}
+
+func (s *Server) handleCacheQueue(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		s.writeError(w, http.StatusMethodNotAllowed, "GET required")
+		return
+	}
+	lookAhead := 3
+	if raw := r.URL.Query().Get("lookahead"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 1 && parsed <= 12 {
+			lookAhead = parsed
+		}
+	}
+	pl := s.worker.CurrentPlaylist()
+	items := []cacheQueueItem{}
+	if pl == nil || len(pl.Videos) == 0 {
+		s.writeJSON(w, items)
+		return
+	}
+	start := s.worker.CurrentIndex()
+	if start < 0 || start >= len(pl.Videos) {
+		start = 0
+	}
+	for offset := 0; offset < len(pl.Videos) && len(items) < lookAhead; offset++ {
+		index := start + offset
+		if index >= len(pl.Videos) {
+			if !s.cfg.Streamer.LoopPlaylist {
+				break
+			}
+			index %= len(pl.Videos)
+		}
+		entry := pl.Videos[index]
+		providerName := entry.Provider
+		if providerName == "" {
+			providerName = providers.InferProviderFromURL(entry.URL)
+		}
+		if providerName != "smb" {
+			continue
+		}
+		share, path, err := smbQueueLocation(entry.URL)
+		if err != nil {
+			continue
+		}
+		if _, err := s.smb.ValidateURL(entry.URL); err != nil {
+			continue
+		}
+		items = append(items, cacheQueueItem{
+			URL: entry.URL, Share: share, Path: path, Title: entry.Title, Position: index,
+			Status: s.worker.CacheUploadStatus(entry.URL),
+		})
+	}
+	s.writeJSON(w, items)
+}
+
+func (s *Server) handleCacheUpload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		s.writeError(w, http.StatusMethodNotAllowed, "PUT required")
+		return
+	}
+	cacheKey := strings.TrimSpace(r.URL.Query().Get("url"))
+	if _, _, err := smbQueueLocation(cacheKey); err != nil {
+		s.writeError(w, http.StatusBadRequest, "valid SMB item URL required")
+		return
+	}
+	if _, err := s.smb.ValidateURL(cacheKey); err != nil {
+		s.writeError(w, http.StatusBadRequest, "SMB item is outside the configured shares")
+		return
+	}
+	if r.ContentLength <= 0 {
+		s.writeError(w, http.StatusLengthRequired, "Content-Length required")
+		return
+	}
+	if err := s.worker.ReceiveCacheUpload(r.Context(), cacheKey, r.Body, r.ContentLength); err != nil {
+		log.Printf("[media-cache] Public Trees upload failed: %v", err)
+		s.writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	log.Printf("[media-cache] Received Trees item over public HTTPS (%d MB)", r.ContentLength/(1024*1024))
+	s.writeJSON(w, map[string]any{"status": "cached", "bytes": r.ContentLength})
+}
+
+func smbQueueLocation(raw string) (string, string, error) {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme != "smb" || parsed.Host == "" {
+		return "", "", fmt.Errorf("invalid SMB URL")
+	}
+	path := strings.TrimPrefix(parsed.Path, "/")
+	if path == "" {
+		return "", "", fmt.Errorf("SMB URL requires a file path")
+	}
+	return parsed.Host, path, nil
 }
 
 // ── CORS ────────────────────────────────────────────────────────────

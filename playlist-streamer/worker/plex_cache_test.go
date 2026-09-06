@@ -45,6 +45,30 @@ func TestPlexCacheDownloadsAndReusesCompleteFile(t *testing.T) {
 	}
 }
 
+func TestPlexCacheReceivesAtomicPublicUpload(t *testing.T) {
+	payload := bytes.Repeat([]byte("public-upload-"), 10_000)
+	cache := testPlexCache(t, http.DefaultClient)
+	key := "smb://movies/Example/movie.mkv"
+	var received, total int64
+
+	path, err := cache.receive(context.Background(), key, bytes.NewReader(payload), int64(len(payload)), func(current, size int64) {
+		received, total = current, size
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(got, payload) {
+		t.Fatalf("uploaded cache payload mismatch: bytes=%d err=%v", len(got), err)
+	}
+	if received != int64(len(payload)) || total != int64(len(payload)) {
+		t.Fatalf("progress=(%d,%d), want (%d,%d)", received, total, len(payload), len(payload))
+	}
+	if _, err := os.Stat(path + ".incoming"); !os.IsNotExist(err) {
+		t.Fatalf("incoming file remains after upload: %v", err)
+	}
+}
+
 func TestPlexCacheResumesPartialFile(t *testing.T) {
 	payload := bytes.Repeat([]byte("0123456789"), 30_000)
 	const offset = 70_000

@@ -27,6 +27,40 @@ func TestRequireSessionUsesForwardedPrefixForLogin(t *testing.T) {
 	}
 }
 
+func TestRequireTransferAuthAcceptsBearerToken(t *testing.T) {
+	s := &Server{cfg: &config.Config{Dashboard: config.DashboardConfig{AdminToken: "transfer-secret"}}}
+	called := false
+	handler := s.requireTransferAuth(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusNoContent)
+	})
+	req := httptest.NewRequest(http.MethodGet, "http://localhost/api/cache/queue", nil)
+	req.Header.Set("Authorization", "Bearer transfer-secret")
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, req)
+
+	if !called || response.Code != http.StatusNoContent {
+		t.Fatalf("called=%v status=%d, want true/%d", called, response.Code, http.StatusNoContent)
+	}
+}
+
+func TestRequireTransferAuthRejectsWrongToken(t *testing.T) {
+	s := &Server{cfg: &config.Config{Dashboard: config.DashboardConfig{AdminToken: "transfer-secret"}}}
+	handler := s.requireTransferAuth(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("protected handler was called with the wrong token")
+	})
+	req := httptest.NewRequest(http.MethodGet, "http://localhost/api/cache/queue", nil)
+	req.Header.Set("Authorization", "Bearer wrong")
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, req)
+
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d, want %d", response.Code, http.StatusUnauthorized)
+	}
+}
+
 func TestPrefixedPathRejectsUnsafePrefix(t *testing.T) {
 	for _, prefix := range []string{"https://example.com", "/../outside", "/stream?next=outside", `/stream\\outside`} {
 		req := httptest.NewRequest(http.MethodGet, "http://localhost/", nil)

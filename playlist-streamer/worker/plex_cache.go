@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -42,6 +43,7 @@ type plexCache struct {
 	maxBytes     int64
 	minFreeBytes int64
 	client       *http.Client
+	capacityMu   sync.Mutex
 }
 
 func newPlexCache(cfg config.StreamerConfig) *plexCache {
@@ -147,7 +149,7 @@ func (c *plexCache) fetch(ctx context.Context, cacheKey, sourceURL string, prote
 	if remaining < 0 {
 		return "", fmt.Errorf("Plex cache partial file is larger than the source")
 	}
-	if err := c.ensureCapacity(remaining, protected); err != nil {
+	if err := c.ensureCapacityLocked(remaining, protected); err != nil {
 		return "", err
 	}
 	if progress != nil {
@@ -239,7 +241,7 @@ func (c *plexCache) fetchFile(ctx context.Context, cacheKey, sourcePath string, 
 		}
 		return finalPath, nil
 	}
-	if err := c.ensureCapacity(totalSize-offset, protected); err != nil {
+	if err := c.ensureCapacityLocked(totalSize-offset, protected); err != nil {
 		return "", err
 	}
 	if progress != nil {
@@ -294,6 +296,62 @@ func (c *plexCache) fetchFile(ctx context.Context, cacheKey, sourcePath string, 
 	}
 	if err := os.Rename(partialPath, finalPath); err != nil {
 		return "", fmt.Errorf("complete media cache file: %w", err)
+	}
+	return finalPath, nil
+}
+
+// receive stores a file pushed to Couch over the authenticated cache API. The
+// incoming file is written under a temporary name and becomes visible to the
+// streamer only after the complete body is synced and atomically renamed.
+func (c *plexCache) receive(ctx context.Context, cacheKey string, source io.Reader, totalSize int64, progress func(received, total int64)) (string, error) {
+	if totalSize < minimumCachedMediaSize {
+		return "", fmt.Errorf("uploaded media is too small")
+	}
+	if err := os.MkdirAll(c.dir, 0o750); err != nil {
+		return "", fmt.Errorf("create media cache: %w", err)
+	}
+	finalPath := c.path(cacheKey, cacheKey)
+	if info, err := os.Stat(finalPath); err == nil && info.Mode().IsRegular() && info.Size() == totalSize {
+		return finalPath, nil
+	}
+	protected := map[string]bool{finalPath: true, finalPath + ".incoming": true}
+	if err := c.ensureCapacityLocked(totalSize, protected); err != nil {
+		return "", err
+	}
+	incomingPath := finalPath + ".incoming"
+	file, err := os.OpenFile(incomingPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o640)
+	if err != nil {
+		return "", fmt.Errorf("open incoming cache file: %w", err)
+	}
+	if progress != nil {
+		progress(0, totalSize)
+	}
+	destination := io.Writer(file)
+	if progress != nil {
+		destination = &cacheProgressWriter{writer: file, total: totalSize, progress: progress}
+	}
+	written, copyErr := io.CopyBuffer(destination, &contextReader{ctx: ctx, reader: io.LimitReader(source, totalSize+1)}, make([]byte, 4*1024*1024))
+	syncErr := file.Sync()
+	closeErr := file.Close()
+	if copyErr != nil {
+		_ = os.Remove(incomingPath)
+		return "", fmt.Errorf("receive media upload: %w", copyErr)
+	}
+	if syncErr != nil {
+		_ = os.Remove(incomingPath)
+		return "", fmt.Errorf("sync media upload: %w", syncErr)
+	}
+	if closeErr != nil {
+		_ = os.Remove(incomingPath)
+		return "", fmt.Errorf("close media upload: %w", closeErr)
+	}
+	if written != totalSize {
+		_ = os.Remove(incomingPath)
+		return "", fmt.Errorf("media upload size mismatch: received %d of %d bytes", written, totalSize)
+	}
+	if err := os.Rename(incomingPath, finalPath); err != nil {
+		_ = os.Remove(incomingPath)
+		return "", fmt.Errorf("complete media upload: %w", err)
 	}
 	return finalPath, nil
 }
@@ -408,6 +466,12 @@ func (c *plexCache) ensureCapacity(incoming int64, protected map[string]bool) er
 		return fmt.Errorf("remote media cache would leave less than %d GB free", c.minFreeBytes/(1024*1024*1024))
 	}
 	return nil
+}
+
+func (c *plexCache) ensureCapacityLocked(incoming int64, protected map[string]bool) error {
+	c.capacityMu.Lock()
+	defer c.capacityMu.Unlock()
+	return c.ensureCapacity(incoming, protected)
 }
 
 func (c *plexCache) entries() ([]cacheEntry, int64, error) {
